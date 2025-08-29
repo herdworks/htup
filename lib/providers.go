@@ -6,7 +6,7 @@ import (
 
 	// HyperTemplatesKit packages
 	"github.com/herdworks/hyperproviders-go/lib/s3"
-	"github.com/herdworks/hypertexting-monorepo/hypertemplates"
+	hypertemplates "github.com/herdworks/hypertemplates-go/lib"
 )
 
 type HyperProvider struct {

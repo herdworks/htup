@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.53
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.74.0
 
-	github.com/herdworks/hypertexting-monorepo v0.0.0-20250828225438-e0564d05ef6b
+	github.com/herdworks/hypertemplates-go v0.0.0-20250829001807-16318766f8ff
 )
 
 require (
