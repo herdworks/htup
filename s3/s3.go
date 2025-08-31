@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	hypertemplates "github.com/herdworks/hypertemplates-go/lib"
+	hypertemplates "github.com/herdworks/hypertemplates-go"
 )
 
 // Provider Type

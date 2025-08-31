@@ -3,15 +3,13 @@ module github.com/herdworks/hyperproviders-go
 go 1.23.5
 
 require (
-	golang.org/x/sync v0.10.0
-
 	github.com/aws/aws-sdk-go-v2 v1.33.0
 	github.com/aws/aws-sdk-go-v2/config v1.29.1
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.54
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.53
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.74.0
-
-	github.com/herdworks/hypertemplates-go v0.0.0-20250829001807-16318766f8ff
+	github.com/herdworks/hypertemplates-go v0.17.3
+	golang.org/x/sync v0.10.0
 )
 
 require (

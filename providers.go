@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	// HyperTemplatesKit packages
-	"github.com/herdworks/hyperproviders-go/lib/s3"
-	hypertemplates "github.com/herdworks/hypertemplates-go/lib"
+	"github.com/herdworks/hyperproviders-go/s3"
+	hypertemplates "github.com/herdworks/hypertemplates-go"
 )
 
 type HyperProvider struct {
