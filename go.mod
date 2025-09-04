@@ -1,7 +1,11 @@
+// hyperproviders-go module
+//
+// reference: https://go.dev/doc/modules/gomod-ref#replace
 module github.com/herdworks/hyperproviders-go
 
 go 1.23.5
 
+// direct dependencies
 require (
 	github.com/aws/aws-sdk-go-v2 v1.33.0
 	github.com/aws/aws-sdk-go-v2/config v1.29.1
@@ -12,6 +16,12 @@ require (
 	golang.org/x/sync v0.10.0
 )
 
+// local development dependencies (replacements)
+//
+// uncomment to use local dependencies
+// replace github.com/herdworks/hypertemplates-go => ../hypertemplates-go
+
+// transitive dependencies
 require (
 	github.com/alecthomas/chroma/v2 v2.2.0 // indirect
 	github.com/andybalholm/cascadia v1.3.2 // indirect
