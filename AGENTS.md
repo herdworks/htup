@@ -1,23 +1,47 @@
----
-description: Default instructions
-applyTo: "**"
----
+# AGENTS.md
 
-# Default Copilot Instructions
+Greetings, coding agent. Welcome to the team!
 
-These are generic instructions that may be applied as software development best practices for GitHub Copilot.
-These instructions should be treated as defaults, so if/when domain-specific instructions conflict (e.g. programming language-specific instructions), the other/conflicting instructions should take precedent.
+* [Project Instructions](#project-instructions)
+* [General Instructions](#general-instructions)
+* [Programming Languages](#programming-languages)
 
+--
+## Project Instructions
+
+<!-- Project Instructions take priority over all other instructions -->
+
+### Development Instructions
+
+* Always run `go fmt ./...` before committing
+
+### Testing Instructions
+
+* Test this project with `go test ./... -v`
+
+--
 ## General Instructions
 
+<!-- General Instructions are default preferences and best practices -->
+
+### Best Practices
+
+* Always refer to `README.md` for a description of this project's goals
 * Write simple, clear, and idiomatic code
 * Favor clarity and simplicity over cleverness
 * Follow the principle of least surprise
 * Write "straightline" (left-aligned) code wherever possible, exiting early to avoid nesting
 * Keep line length reasonable (no hard limit, but assume readability suffers beyond 120 characters)
 * Add blank lines to separate logical groups of code
+* When asked to do something that deviates from these instruction (AGENTS.md), ask for clarification!
 
-## Dependency Management
+### Development Environment
+
+* Use `curl` for performing HTTP requests or when documenting example HTTP requests
+* Use `git` for revision control
+* Use `.envrc` files to manage environment variables (see: https://direnv.net)
+
+### Dependency Management
 
 * Use standard libraries liberally
 * Use language-native dependency management tools (if available)
@@ -29,7 +53,7 @@ These instructions should be treated as defaults, so if/when domain-specific ins
 * Pin versions for reproducibility
 * Avoid circular dependencies at all costs
 
-## Methods & Functions
+### Methods & Functions
 
 * Functions should do one thing well; extract helpers when complexity grows
 * Functions that need more than ~3-4 arguments are a code smell and should be refactored to accept a type
@@ -41,22 +65,21 @@ These instructions should be treated as defaults, so if/when domain-specific ins
 * Prefer pattern matching / switch statements where the language supports it
 * If a function returns an error, it should be the last return value
 
-## Errors
+### Errors
 
 * Propagate errors with context; surface actionable messages without leaking sensitive data
 * Return errors (preferred) OR log them, but never both
 * Handle errors at the appropriate level
 * Consider using structured errors for better debugging
 
-## Serialization & Deserialization
+### Serialization & Deserialization
 
-* We are big believers in "as code" workflows (e.g. infrastructure as code), so we are always thinking about serialization & deserialization
-* When implementing types, always add support for serialization & deserialization
+* When implementing custom types, always add support for serialization & deserialization
 * Serialization & deserialization implementations should always support JSON
 * Where possible, serialization & deserialization implementations should also support YAML
 * If serialization & deserialization support for TOML and/or XML is cheap, add them as well
 
-## Cryptography
+### Cryptography
 
 * Always use standard library cryptography packages unless otherwise noted
 * Never implement your own cryptography
@@ -65,11 +88,11 @@ These instructions should be treated as defaults, so if/when domain-specific ins
 * Always store passwords using bcrypt or similar
 * Always use TLS for network communication
 
-## Secrets
+### Secrets
 
 * Never hardcode secrets; always use environment variables or secret managers
 
-## Concurrency
+### Concurrency
 
 * Minimize shared mutable state and prefer message passing to maintain clear ownership
 * Use locks sparingly — keep scope minimal and never nest locks without strict ordering
@@ -81,7 +104,7 @@ These instructions should be treated as defaults, so if/when domain-specific ins
 * Keep concurrency mechanisms separate from core business logic
 * Always use cooperative cancellation to prevent orphaned operations and treat cancellation as distinct from errors
 
-## Comments
+### Comments
 
 * Write comments in complete sentences
 * Don’t repeat the code in prose
@@ -91,7 +114,7 @@ These instructions should be treated as defaults, so if/when domain-specific ins
 * Use multi-line/block comments sparingly
 * Comments should include links to specifications and/or reference documents when appropriate
 
-## Tests
+### Tests
 
 * Keep tests close to the code being tested
 * Use the `_test` or `_tests` suffixes for organizing test directories and/or files
@@ -103,7 +126,7 @@ These instructions should be treated as defaults, so if/when domain-specific ins
 * Keep tests fast; long-running tests should be clearly marked (integration, e2e)
 * Tests should always clean up after themselves
 
-## Documentation
+### Documentation
 
 * Every project should have a CHANGELOG based on "Keep a Changelog" (https://keepachangelog.com/)
 * Every project should have at least one README
@@ -118,15 +141,16 @@ These instructions should be treated as defaults, so if/when domain-specific ins
   * Clear setup instructions
   * A troubleshooting section
 
-## Commits
+### Commits
 
 * Reference issues or tickets when relevant
 * Run tests before committing
 * Keep commits focused and atomic
 * Review diffs before committing
 * Write meaningful commit messages
+* Follow semantic versioning best practices (https://semver.org)
 
-## Common Pitfalls to Avoid
+### Common Pitfalls to Avoid
 
 * Not checking errors
 * Ignoring race conditions
@@ -135,4 +159,36 @@ These instructions should be treated as defaults, so if/when domain-specific ins
 * Swallowing errors instead of handling or propagating them
 * Over-optimizing prematurely (especially around concurrency)
 
-<!-- See https://github.com/github/awesome-copilot/tree/main/instructions for examples -->
+### Operations
+
+* Assume all source code will be hosted on GitHub.com
+* Assume all projects will use GitHub Actions for CI/CD
+
+--
+## Programming Languages
+
+<!-- Programming Language instructions provide additional guidance beyond General Instructions and Project Instructions -->
+
+### JavaScript
+
+* JavaScript (NodeJS) is my preferred language for writing serverless functions
+
+### Golang
+
+* Follow idiomatic Go practices and community standards when writing Go code, including:
+  * [Effective Go](https://go.dev/doc/effective_go)
+  * [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments)
+  * [Google's Go Style Guide](https://google.github.io/styleguide/go/)
+* Use Go modules (`go.mod` / `go.sum`)
+* Run `go mod tidy` to clean up unused dependencies
+* Always format with `go fmt` (or `gofmt`)
+* Always use the `testing` package for tests
+  * Place tests in `_test.go` files next to the code
+  * Mark helpers with `t.Helper()` and use `t.Cleanup()` for teardown
+  * Use subtests with `t.Run` for clarity
+* Treat the Go X-Repositories as part of the standard library (https://go.dev/wiki/X-Repositories)
+
+### Swift
+
+* Treat Swift Foundation as part of the standard library (https://github.com/swiftlang/swift-foundation)
+* When writing CLI tools, always use Swift Argument Parser (https://github.com/apple/swift-argument-parser)
