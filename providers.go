@@ -4,83 +4,66 @@ import (
 	"context"
 	"fmt"
 
-	// HyperTemplatesKit packages
 	"github.com/herdworks/hyperproviders-go/s3"
-	hypertemplates "github.com/herdworks/hypertemplates-go"
+	"github.com/herdworks/hyperproviders-go/types"
 )
 
-type HyperProvider struct {
-	Config *HyperProviderConfig
-	Engine HyperProviderEngine
+// init() registers the types and their constructors.
+func init() {
+	// register deploy providers
+	types.DeployProviders["s3"] = func(config *types.DeployProviderConfig) types.DeployProvider { return &s3.S3DeployProvider{} }
+
+	// register secret providers
+	types.SecretProviders["env"] = func() types.SecretProvider { return &types.EnvSecretProvider{} }
 }
 
-func New(config *HyperProviderConfig) (provider *HyperProvider, err error) {
-	if err = config.Validate(); err != nil {
-		return nil, err
+// HyperProviders represents a collection of deploy providers
+type HyperProviders struct {
+	providers map[string]types.DeployProvider
+}
+
+// New creates HyperProviders from a providers configuration
+func New(config *types.ProvidersConfig) (*HyperProviders, error) {
+	// Validate the configuration
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
-	provider = &HyperProvider{Config: config}
-	switch provider.Config.Kind {
-	case "s3":
-		engine := &s3.Provider{Endpoint: config.Endpoint, Bucket: config.Store}
-		if err = config.Secrets.Validate("access_key_id", "secret_access_key"); err != nil {
-			return nil, err
+
+	providers := &HyperProviders{
+		providers: make(map[string]types.DeployProvider),
+	}
+
+	// Create each provider
+	for _, providerConfig := range config.Providers {
+		deployProvider, err := createProvider(&providerConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create provider '%s': %w", providerConfig.Name, err)
 		}
-		if engine.AccessKey, err = config.Secrets.Get("access_key_id").Value(); err != nil {
-			return nil, err
+		providers.providers[providerConfig.Name] = deployProvider
+	}
+
+	return providers, nil
+}
+
+// Deploy deploys to all configured providers
+func (hps *HyperProviders) Deploy(ctx context.Context, buildPath, baseURL string) error {
+	for name, provider := range hps.providers {
+		if err := provider.Deploy(ctx, buildPath, baseURL); err != nil {
+			return fmt.Errorf("deployment to provider '%s' failed: %w", name, err)
 		}
-		if engine.SecretAccessKey, err = config.Secrets.Get("secret_access_key").Value(); err != nil {
-			return nil, err
-		}
-		provider.Engine = engine
-	default:
-		err := fmt.Errorf("provider kind \"%s\" not supported", config.Kind)
-		return nil, err
-	}
-	return provider, nil
-}
-
-// Publish a single directory (non-recursive)
-func (provider *HyperProvider) Publish(context context.Context, buildPath string, domain string) error {
-	hyperfiles := hypertemplates.GetFiles(buildPath, false)
-	hyperfiles.SetRoot(buildPath)
-	return provider.Engine.PutFiles(context, hyperfiles, buildPath, domain)
-}
-
-// Publish the entire website (recursive)
-func (provider *HyperProvider) Deploy(context context.Context, buildPath string, domain string) error {
-	hyperfiles := hypertemplates.GetFiles(buildPath, true)
-	if len(hyperfiles) == 0 {
-		return fmt.Errorf("no files found in build path: %s", buildPath)
-	}
-	hyperfiles.SetRoot(buildPath) // sets file.Base to the build path
-	return provider.Engine.PutFiles(context, hyperfiles, buildPath, domain)
-}
-
-// =============================================================================
-// Helper types, methods, and functions
-// =============================================================================
-
-type HyperProviderEngine interface {
-	PutFile(context context.Context, hyperfile hypertemplates.HyperFile, buildPath string, domain string) error
-	PutFiles(context context.Context, hyperfiles hypertemplates.HyperFiles, buildPath string, domain string) error
-}
-
-type HyperProviderConfig struct {
-	Kind     string  `json:"kind" yaml:"kind"`
-	Endpoint string  `json:"endpoint" yaml:"endpoint"`
-	Store    string  `json:"store" yaml:"store"` // e.g. bucket name
-	Secrets  Secrets `json:"secrets" yaml:"secrets"`
-}
-
-func (provider *HyperProviderConfig) Validate() (err error) {
-	if len(provider.Kind) == 0 {
-		return fmt.Errorf("missing required \"site.provider.kind\" setting")
-	}
-	if len(provider.Endpoint) == 0 {
-		return fmt.Errorf("missing required \"site.provider.endpoint\" setting")
-	}
-	if len(provider.Store) == 0 {
-		return fmt.Errorf("missing required \"site.provider.store\" setting")
 	}
 	return nil
+}
+
+// createProvider creates a provider instance from its configuration
+func createProvider(config *types.DeployProviderConfig) (types.DeployProvider, error) {
+	// Validate the configuration
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	providerConstructor, _ := types.DeployProviders[config.Kind]
+	provider := providerConstructor(config)
+
+	return provider, nil
 }
