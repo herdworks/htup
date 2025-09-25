@@ -5,11 +5,6 @@ import (
 	"regexp"
 )
 
-// ProvidersConfig represents a collection of deploy providers
-type ProvidersConfig struct {
-	Providers []DeployProviderConfig `json:"providers" yaml:"providers"`
-}
-
 // DeployProviderConfig represents configuration for a single deploy provider
 type DeployProviderConfig struct {
 	Name    string                 `json:"name" yaml:"name"`       // kebab/snake-case identifier (a-z, 0-9, -/_)
@@ -20,9 +15,9 @@ type DeployProviderConfig struct {
 
 // SecretConfig represents configuration for obtaining secrets
 type SecretConfig struct {
-	Name string `json:"name" yaml:"name"`     // secret name used by deploy provider
-	Kind string `json:"provider" yaml:"kind"` // secret provider type (e.g., "env")
-	Key  string `json:"key" yaml:"key"`       // key/path to the secret value
+	Name string `json:"name" yaml:"name"` // secret name used by deploy provider
+	Kind string `json:"kind" yaml:"kind"` // secret provider type (e.g., "env")
+	Key  string `json:"key" yaml:"key"`   // key/path to the secret value
 }
 
 // validateName validates that a provider name follows kebab-case rules
@@ -88,23 +83,5 @@ func (c *DeployProviderConfig) Validate() error {
 	if err := c.validateSecrets(); err != nil {
 		return err
 	}
-	return nil
-}
-
-// Validate ensures the list of deploy providers has no duplicates and is not empty
-func (c *ProvidersConfig) Validate() error {
-	if len(c.Providers) == 0 {
-		return fmt.Errorf("at least one provider must be configured")
-	}
-
-	// Check for duplicate names
-	names := make(map[string]bool)
-	for _, provider := range c.Providers {
-		if names[provider.Name] {
-			return fmt.Errorf("duplicate provider name '%s'", provider.Name)
-		}
-		names[provider.Name] = true
-	}
-
 	return nil
 }

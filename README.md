@@ -38,8 +38,7 @@ import (
 
 func main() {
     // Configure providers (can deploy to multiple providers simultaneously)
-    config := &types.ProvidersConfig{
-        Providers: []types.DeployProviderConfig{
+    configs := []types.DeployProviderConfig{
             {
                 Name: "primary-s3",
                 Kind: "s3",
@@ -53,11 +52,10 @@ func main() {
                 },
             },
             // Add more providers as needed - they'll all be deployed to simultaneously
-        },
-    }
+        }
 
     // Create providers
-    providers, err := hyperproviders.New(config)
+    providers, err := hyperproviders.New(configs)
     if err != nil {
         panic(err)
     }
@@ -172,15 +170,12 @@ The `BaseDeployProvider` provides common functionality for deploy providers:
 
 ### Core Methods
 
-- `hyperproviders.New(config)` - Create providers from configuration
+- `hyperproviders.New(configs)` - Create providers from multiple configurations
 - `providers.Deploy(ctx, buildPath, baseURL)` - Deploy to all configured providers
 
 ### Configuration
 
 ```go
-type ProvidersConfig struct {
-    Providers []DeployProviderConfig `json:"providers" yaml:"providers"`
-}
 
 type DeployProviderConfig struct {
     Name    string                 `json:"name" yaml:"name"`       // Unique provider name

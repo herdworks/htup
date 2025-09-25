@@ -23,10 +23,19 @@ type HyperProviders struct {
 }
 
 // New creates HyperProviders from a providers configuration
-func New(config *types.ProvidersConfig) (*HyperProviders, error) {
+func New(configs []types.DeployProviderConfig) (*HyperProviders, error) {
 	// Validate the configuration
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	if len(configs) == 0 {
+		return nil, fmt.Errorf("at least one provider must be configured")
+	}
+
+	// Check for duplicate names
+	names := make(map[string]bool)
+	for _, provider := range configs {
+		if names[provider.Name] {
+			return nil, fmt.Errorf("duplicate provider name '%s'", provider.Name)
+		}
+		names[provider.Name] = true
 	}
 
 	providers := &HyperProviders{
@@ -34,7 +43,7 @@ func New(config *types.ProvidersConfig) (*HyperProviders, error) {
 	}
 
 	// Create each provider
-	for _, providerConfig := range config.Providers {
+	for _, providerConfig := range configs {
 		deployProvider, err := createProvider(&providerConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create provider '%s': %w", providerConfig.Name, err)
