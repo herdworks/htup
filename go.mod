@@ -15,10 +15,6 @@ require (
 	golang.org/x/sync v0.10.0
 )
 
-// local development dependencies (replacements)
-//
-// uncomment to use local dependencies
-
 // transitive dependencies
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.7 // indirect

@@ -28,7 +28,7 @@ type S3DeployProvider struct {
 	secretKey string
 }
 
-// Factory function for Car
+// S3DeployProvider Constructor
 func NewS3Provider(config *types.DeployProviderConfig) *S3DeployProvider {
 	// Call the "constructor" for the embedded struct
 	baseProvider := types.NewBaseDeployProvider(config)
