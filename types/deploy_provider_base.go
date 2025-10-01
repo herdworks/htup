@@ -17,21 +17,24 @@ type BaseDeployProvider struct {
 }
 
 // Factory function for BaseDeployProvider
-func NewBaseDeployProvider(config *DeployProviderConfig) *BaseDeployProvider {
+func NewBaseDeployProvider(config *DeployProviderConfig) (*BaseDeployProvider, error) {
 	secretProviders := make(map[string]SecretProvider)
 	for _, secret := range config.Secrets {
 		if _, exists := secretProviders[secret.Kind]; !exists {
 			// Build the secret provider
-			secretProviderConstructor, _ := SecretProviders[secret.Kind]
+			secretProviderConstructor := SecretProviders[secret.Kind]
 			secretProvider := secretProviderConstructor()
 			secretProviders[secret.Kind] = secretProvider
 		}
 	}
-	return &BaseDeployProvider{config: config, secretProviders: secretProviders}
+	return &BaseDeployProvider{config: config, secretProviders: secretProviders}, nil
 }
 
 // GetConfig returns a configuration value as a string
 func (b *BaseDeployProvider) GetConfig(key string) (string, error) {
+	if b.config == nil {
+		return "", fmt.Errorf("provider configuration is not set")
+	}
 	if val, ok := b.config.Config[key]; ok {
 		if str, ok := val.(string); ok {
 			return str, nil

@@ -11,6 +11,7 @@ The goal of the HyperTexting platform is to make updating your website _easier_ 
 - **Multi-Provider Deployment**: Deploy to multiple providers simultaneously with a single command
 - **Unified Interface**: Deploy to different providers using the same API
 - **Provider Support**: S3-compatible services (with more providers coming soon)
+- **Smart Uploads**: Smart file comparison to avoid unnecessary uploads and reduce deployment time
 - **File Discovery**: Automatically discover and process website assets
 - **Secret Management**: Secure handling of credentials via configurable secret providers
 - **Extensible Architecture**: Easy to add new provider and secret provider implementations
@@ -45,6 +46,7 @@ func main() {
                 Config: map[string]interface{}{
                     "endpoint": "https://s3.amazonaws.com",
                     "store":    "my-website-bucket",
+                    "smart_upload": "true", // Enable smart uploads (optional)
                 },
                 Secrets: []types.SecretConfig{
                     {Name: "access_key_id", Kind: "env", Key: "AWS_ACCESS_KEY_ID"},
@@ -231,4 +233,61 @@ provider:
 ```
 
 This configuration will deploy your website to both Cloudflare R2 and AWS S3 simultaneously when you build your site.
+
+## Smart Uploads
+
+The S3 provider supports **smart upload** functionality that intelligently compares local and remote files to avoid unnecessary uploads. This feature significantly reduces deployment time and bandwidth usage, especially for large sites or frequent deployments.
+
+### How It Works
+
+When `smart_upload` is enabled, the S3 provider follows this workflow for each file:
+
+1. **Check if file exists**: Attempts upload with `If-None-Match: "*"` header. If the file doesn't exist remotely, upload proceeds immediately.
+
+2. **Compare file sizes**: If the file exists, compares local and remote file sizes. If different, upload proceeds.
+
+3. **Compare MD5 hashes**: If sizes match, compares the local file's MD5 hash with the remote ETag. If identical, upload is skipped.
+
+4. **Deep content comparison**: If ETags don't match (which can happen with multipart uploads), downloads the remote file and compares actual MD5 content hashes.
+
+5. **Conditional upload**: If files are different, uploads with `If-Match` condition to handle race conditions from concurrent deployments.
+
+6. **Retry mechanism**: Implements exponential backoff (up to 5 attempts) to handle concurrent modifications.
+
+### Configuration
+
+Enable conditional upsert by adding `smart_upload: "true"` to your S3 provider config:
+
+```yaml
+provider:
+  - name: my-s3-provider
+    kind: s3
+    config:
+      endpoint: https://s3.amazonaws.com
+      store: my-website-bucket
+      smart_upload: "true"  # Enable smart uploads
+    secrets:
+      - name: access_key_id
+        kind: env
+        key: AWS_ACCESS_KEY_ID
+      - name: secret_access_key
+        kind: env
+        key: AWS_SECRET_ACCESS_KEY
+```
+
+### Benefits
+
+- **Faster deployments**: Only uploads files that have actually changed
+- **Reduced bandwidth**: Saves on data transfer costs and time
+- **Race condition safety**: Handles concurrent deployments gracefully
+- **Backward compatible**: Disabled by default, so existing deployments are unaffected
+
+### When to Use
+
+- **Large sites**: Sites with many assets benefit most from selective uploads
+- **Frequent deployments**: CI/CD pipelines with regular builds
+- **Bandwidth constraints**: Environments with limited or expensive bandwidth
+- **Multiple environments**: When deploying the same content to multiple S3-compatible services
+
+The feature is particularly useful for content sites, documentation, or any static site where only a subset of files typically change between deployments.
 

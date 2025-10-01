@@ -21,7 +21,7 @@ type SecretProvider interface {
 }
 
 // Factory function types for creating providers
-type NewDeployProviderFunc func(config *DeployProviderConfig) DeployProvider
+type NewDeployProviderFunc func(config *DeployProviderConfig) (DeployProvider, error)
 type NewSecretProviderFunc func() SecretProvider
 
 // Global provider registries

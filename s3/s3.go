@@ -2,11 +2,15 @@ package s3
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -22,24 +26,36 @@ import (
 // DeployProvider implements the DeployProvider interface for S3-compatible storage
 type S3DeployProvider struct {
 	types.BaseDeployProvider
-	endpoint  string
-	bucket    string
-	accessKey string
-	secretKey string
+	endpoint    string
+	bucket      string
+	accessKey   string
+	secretKey   string
+	smartUpload bool
 }
 
 // S3DeployProvider Constructor
-func NewS3Provider(config *types.DeployProviderConfig) *S3DeployProvider {
+func NewS3Provider(config *types.DeployProviderConfig) (*S3DeployProvider, error) {
 	// Call the "constructor" for the embedded struct
-	baseProvider := types.NewBaseDeployProvider(config)
+	baseProvider, err := types.NewBaseDeployProvider(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create base deploy provider: %w", err)
+	}
 
 	s3Provider := &S3DeployProvider{
 		BaseDeployProvider: *baseProvider,
 	}
 
-	s3Provider.Validate()
+	err = s3Provider.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("Warning: S3 provider validation error: %v\n", err)
+	}
 
-	return s3Provider
+	fmt.Printf("S3 provider config:\n")
+	fmt.Printf(" -endpoint: %s\n", s3Provider.endpoint)
+	fmt.Printf(" -bucket: %s\n", s3Provider.bucket)
+	fmt.Printf(" -smart_upload: %v\n", s3Provider.smartUpload)
+
+	return s3Provider, nil
 }
 
 // Deploy uploads files from buildPath to S3 using the given base URL
@@ -64,7 +80,7 @@ func (p *S3DeployProvider) Deploy(ctx context.Context, buildPath, baseURL string
 	// Walk through all files and upload them
 	err = p.WalkFiles(buildPath, func(filePath, relativePath string) error {
 		taskgroup.Go(func() error {
-			return p.uploadFile(groupCtx, uploader, filePath, relativePath, domain)
+			return p.uploadFile(groupCtx, client, uploader, filePath, relativePath, domain)
 		})
 		return nil
 	})
@@ -106,11 +122,18 @@ func (p *S3DeployProvider) Validate() error {
 		return fmt.Errorf("secret_access_key secret is required: %w", err)
 	}
 
+	// Get smart upload setting (optional, defaults to false)
+	if smartUploadStr, err := p.GetConfig("smart_upload"); err == nil {
+		if parsed, parseErr := strconv.ParseBool(smartUploadStr); parseErr == nil {
+			p.smartUpload = parsed
+		}
+	}
+
 	return nil
 }
 
 // uploadFile uploads a single file to S3
-func (p *S3DeployProvider) uploadFile(ctx context.Context, uploader *manager.Uploader, filePath, relativePath, domain string) error {
+func (p *S3DeployProvider) uploadFile(ctx context.Context, s3Client *s3.Client, uploader *manager.Uploader, filePath, relativePath, domain string) error {
 	// Open the file
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -140,7 +163,15 @@ func (p *S3DeployProvider) uploadFile(ctx context.Context, uploader *manager.Upl
 
 	// Upload the file
 	fmt.Printf("Uploading %s to s3://%s/%s\n", relativePath, p.bucket, relativePath)
-	_, err = uploader.Upload(ctx, input)
+
+	if p.smartUpload {
+		// Use conditional upsert logic
+		err = p.conditionalUploadWithRetry(ctx, s3Client, uploader, input, filePath, relativePath)
+	} else {
+		// Use simple upload logic
+		_, err = uploader.Upload(ctx, input)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to upload %s: %w", relativePath, err)
 	}
@@ -188,6 +219,183 @@ func (p *S3DeployProvider) getCacheControl(filePath string) string {
 	default:
 		return "public, max-age=3600" // 1 hour
 	}
+}
+
+// calculateFileMD5 calculates the MD5 hash of a local file
+func (p *S3DeployProvider) calculateFileMD5(filePath string) (string, error) {
+	fmt.Printf("Calculating MD5 for %s\n", filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("failed to calculate MD5 hash: %w", err)
+	}
+
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+// getFileSize returns the size of a local file
+func (p *S3DeployProvider) getFileSize(filePath string) (int64, error) {
+	stat, err := os.Stat(filePath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get file stat: %w", err)
+	}
+	return stat.Size(), nil
+}
+
+// conditionalUploadWithRetry implements the conditional upsert logic with retry mechanism
+func (p *S3DeployProvider) conditionalUploadWithRetry(ctx context.Context, s3Client *s3.Client, uploader *manager.Uploader, input *s3.PutObjectInput, filePath, relativePath string) error {
+	const maxRetries = 5
+
+	var localSize *int64 // local file size (pointer to handle the nil case)
+	var localMD5 string  // local MD5 hash
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
+			backoffDuration := time.Duration(100<<attempt) * time.Millisecond
+			fmt.Printf("Retrying upload of %s (attempt %d/%d) after %v\n", relativePath, attempt+1, maxRetries, backoffDuration)
+			time.Sleep(backoffDuration)
+		}
+
+		// Step 1: Try to upload with If-None-Match: "*"
+		inputCopy := *input
+		inputCopy.IfNoneMatch = aws.String("*")
+
+		_, err := uploader.Upload(ctx, &inputCopy)
+		if err == nil {
+			// Upload succeeded - object didn't exist before
+			fmt.Printf("Uploaded new object %s\n", relativePath)
+			return nil
+		}
+
+		// Check if it's a 412 error (object already exists)
+		if !strings.Contains(err.Error(), "412") && !strings.Contains(err.Error(), "PreconditionFailed") {
+			// Some other error occurred
+			return fmt.Errorf("failed to upload %s: %w", relativePath, err)
+		}
+
+		// Step 2: Object exists, get its metadata
+		headResp, err := s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: input.Bucket,
+			Key:    input.Key,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to get object metadata for %s: %w", relativePath, err)
+		}
+
+		remoteSize := headResp.ContentLength
+		remoteMD5 := headResp.Metadata["ht-md5"]
+		remoteETag := aws.ToString(headResp.ETag)
+		// Remove quotes from ETag if present
+		if len(remoteETag) > 2 && remoteETag[0] == '"' && remoteETag[len(remoteETag)-1] == '"' {
+			remoteETag = remoteETag[1 : len(remoteETag)-1]
+		}
+
+		// Step 3: Compare file sizes
+		if localSize == nil {
+			// Get local file size only once if we're in a retry loop
+			size, err := p.getFileSize(filePath)
+			if err != nil {
+				return fmt.Errorf("failed to get local file size: %w", err)
+			}
+			localSize = &size
+		}
+
+		if *localSize == *remoteSize {
+			// Step 4: Sizes match, compare MD5 hashes
+			if localMD5 == "" {
+				// Get local MD5 sum only once if we're in a retry loop
+				localMD5, err = p.calculateFileMD5(filePath)
+				if err != nil {
+					return fmt.Errorf("failed to calculate local file MD5: %w", err)
+				}
+			}
+
+			if remoteMD5 != "" {
+				// We have a stored MD5, use it
+				if localMD5 == remoteMD5 {
+					// Files are identical, no need to upload
+					fmt.Printf("Skipped upload of %s (identical file already exists, MD5)\n", relativePath)
+					return nil
+				}
+			} else {
+				// No stored MD5, fall back to ETag comparison
+				if localMD5 == remoteETag {
+					// Files are identical, no need to upload
+					fmt.Printf("Skipped upload of %s (identical file already exists, ETag)\n", relativePath)
+					return nil
+				}
+			}
+			// This code is commented out because it is not strictly necessary, however we may some day want it,
+			// so leaving it here for now. The MD5 vs ETag comparison should be sufficient to determine if the
+			// files are identical or not, in most cases. If they are not identical, we will proceed to upload
+			// with If-Match condition. However, if you want to be absolutely sure, you can uncomment this code
+			// to fetch the remote object and calculate its MD5 hash for a definitive comparison.
+			/*
+
+				// Step 5: MD5s don't match, fetch remote object to get actual content
+				getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
+					Bucket: input.Bucket,
+					Key:    input.Key,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to get object content for %s: %w", relativePath, err)
+				}
+				defer getResp.Body.Close()
+
+				// Update ETag from GET response, just to minimize race conditions
+				if getResp.ETag != nil {
+					remoteETag = aws.ToString(getResp.ETag)
+					if len(remoteETag) > 2 && remoteETag[0] == '"' && remoteETag[len(remoteETag)-1] == '"' {
+						remoteETag = remoteETag[1 : len(remoteETag)-1]
+					}
+				}
+
+				// Step 6: Calculate MD5 of remote content
+				remoteMD5Hash := md5.New()
+				if _, err := io.Copy(remoteMD5Hash, getResp.Body); err != nil {
+					return fmt.Errorf("failed to calculate remote file MD5: %w", err)
+				}
+				remoteMD5 := fmt.Sprintf("%x", remoteMD5Hash.Sum(nil))
+
+				if localMD5 == remoteMD5 {
+					// Files have identical content, no need to upload
+					return nil
+				}
+
+			*/
+		}
+
+		// Step 7: Upload with If-Match condition
+		inputCopy = *input
+		inputCopy.IfMatch = aws.String(remoteETag)
+		inputCopy.Metadata = map[string]string{
+			"ht-md5": localMD5,
+		}
+
+		_, err = uploader.Upload(ctx, &inputCopy)
+		if err == nil {
+			// Upload succeeded
+			fmt.Printf("Uploaded updated object %s\n", relativePath)
+			return nil
+		}
+
+		// Check if it's a 412 error (object changed since we read it)
+		if !strings.Contains(err.Error(), "412") && !strings.Contains(err.Error(), "PreconditionFailed") {
+			// Some other error occurred
+			return fmt.Errorf("failed to upload %s: %w", relativePath, err)
+		}
+
+		// Object changed since we read it, retry the whole process
+		continue
+	}
+
+	return fmt.Errorf("failed to upload %s after %d attempts due to concurrent modifications", relativePath, maxRetries)
 }
 
 // newS3Client creates a new S3 client with the provider's configuration

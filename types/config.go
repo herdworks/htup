@@ -7,10 +7,10 @@ import (
 
 // DeployProviderConfig represents configuration for a single deploy provider
 type DeployProviderConfig struct {
-	Name    string                 `json:"name" yaml:"name"`       // kebab/snake-case identifier (a-z, 0-9, -/_)
-	Kind    string                 `json:"kind" yaml:"kind"`       // deploy provider type (e.g., "s3")
-	Config  map[string]interface{} `json:"config" yaml:"config"`   // provider-specific configuration
-	Secrets []SecretConfig         `json:"secrets" yaml:"secrets"` // provider secrets
+	Name    string         `json:"name" yaml:"name"`       // kebab/snake-case identifier (a-z, 0-9, -/_)
+	Kind    string         `json:"kind" yaml:"kind"`       // deploy provider type (e.g., "s3")
+	Config  map[string]any `json:"config" yaml:"config"`   // provider-specific configuration
+	Secrets []SecretConfig `json:"secrets" yaml:"secrets"` // provider secrets
 }
 
 // SecretConfig represents configuration for obtaining secrets

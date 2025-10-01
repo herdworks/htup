@@ -11,7 +11,9 @@ import (
 // init() registers the types and their constructors.
 func init() {
 	// register deploy providers
-	types.DeployProviders["s3"] = func(config *types.DeployProviderConfig) types.DeployProvider { return &s3.S3DeployProvider{} }
+	types.DeployProviders["s3"] = func(config *types.DeployProviderConfig) (types.DeployProvider, error) {
+		return s3.NewS3Provider(config)
+	}
 
 	// register secret providers
 	types.SecretProviders["env"] = func() types.SecretProvider { return &types.EnvSecretProvider{} }
@@ -57,6 +59,7 @@ func New(configs []types.DeployProviderConfig) (*HyperProviders, error) {
 // Deploy deploys to all configured providers
 func (hps *HyperProviders) Deploy(ctx context.Context, buildPath, baseURL string) error {
 	for name, provider := range hps.providers {
+		provider.Validate()
 		if err := provider.Deploy(ctx, buildPath, baseURL); err != nil {
 			return fmt.Errorf("deployment to provider '%s' failed: %w", name, err)
 		}
@@ -71,8 +74,11 @@ func createProvider(config *types.DeployProviderConfig) (types.DeployProvider, e
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	providerConstructor, _ := types.DeployProviders[config.Kind]
-	provider := providerConstructor(config)
+	providerConstructor := types.DeployProviders[config.Kind]
+	provider, err := providerConstructor(config)
+	if err != nil {
+		return nil, fmt.Errorf("provider construction failed: %w", err)
+	}
 
 	return provider, nil
 }
