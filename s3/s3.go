@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -50,10 +51,8 @@ func NewS3Provider(config *types.DeployProviderConfig) (*S3DeployProvider, error
 		return nil, fmt.Errorf("Warning: S3 provider validation error: %v\n", err)
 	}
 
-	fmt.Printf("S3 provider config:\n")
-	fmt.Printf(" -endpoint: %s\n", s3Provider.endpoint)
-	fmt.Printf(" -bucket: %s\n", s3Provider.bucket)
-	fmt.Printf(" -smart_upload: %v\n", s3Provider.smartUpload)
+	slog.Debug("S3 provider created", "name", config.Name)
+	slog.Debug("S3 provider config:", "endpoint", s3Provider.endpoint, "bucket", s3Provider.bucket, "smart_upload", s3Provider.smartUpload)
 
 	return s3Provider, nil
 }
@@ -162,7 +161,7 @@ func (p *S3DeployProvider) uploadFile(ctx context.Context, s3Client *s3.Client, 
 	}
 
 	// Upload the file
-	fmt.Printf("Uploading %s to s3://%s/%s\n", relativePath, p.bucket, relativePath)
+	slog.Info("Uploading:", "file", relativePath, "destination", fmt.Sprintf("s3://%s/%s\n", p.bucket, relativePath))
 
 	if p.smartUpload {
 		// Use conditional upsert logic
@@ -183,7 +182,7 @@ func (p *S3DeployProvider) uploadFile(ctx context.Context, s3Client *s3.Client, 
 	}
 	fullURL := baseURL + relativePath
 
-	fmt.Printf("Published %s (%s)\n", fullURL, contentType)
+	slog.Debug(fmt.Sprintf("Published %s (%s)", fullURL, contentType))
 	return nil
 }
 
@@ -223,7 +222,7 @@ func (p *S3DeployProvider) getCacheControl(filePath string) string {
 
 // calculateFileMD5 calculates the MD5 hash of a local file
 func (p *S3DeployProvider) calculateFileMD5(filePath string) (string, error) {
-	fmt.Printf("Calculating MD5 for %s\n", filePath)
+	slog.Debug("Calculating MD5:", "file", filePath)
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open file %s: %w", filePath, err)
@@ -258,7 +257,7 @@ func (p *S3DeployProvider) conditionalUploadWithRetry(ctx context.Context, s3Cli
 		if attempt > 0 {
 			// Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
 			backoffDuration := time.Duration(100<<attempt) * time.Millisecond
-			fmt.Printf("Retrying upload of %s (attempt %d/%d) after %v\n", relativePath, attempt+1, maxRetries, backoffDuration)
+			slog.Debug("Retrying upload:", "file", relativePath, "attempt", attempt+1, "max_attempts", maxRetries, "backoff", backoffDuration)
 			time.Sleep(backoffDuration)
 		}
 
@@ -269,7 +268,7 @@ func (p *S3DeployProvider) conditionalUploadWithRetry(ctx context.Context, s3Cli
 		_, err := uploader.Upload(ctx, &inputCopy)
 		if err == nil {
 			// Upload succeeded - object didn't exist before
-			fmt.Printf("Uploaded new object %s\n", relativePath)
+			slog.Debug("Uploaded new object:", "file", relativePath)
 			return nil
 		}
 
@@ -320,14 +319,14 @@ func (p *S3DeployProvider) conditionalUploadWithRetry(ctx context.Context, s3Cli
 				// We have a stored MD5, use it
 				if localMD5 == remoteMD5 {
 					// Files are identical, no need to upload
-					fmt.Printf("Skipped upload of %s (identical file already exists, MD5)\n", relativePath)
+					slog.Debug("Skipped upload of identical file (MD5):", "file", relativePath)
 					return nil
 				}
 			} else {
 				// No stored MD5, fall back to ETag comparison
 				if localMD5 == remoteETag {
 					// Files are identical, no need to upload
-					fmt.Printf("Skipped upload of %s (identical file already exists, ETag)\n", relativePath)
+					slog.Debug("Skipped upload of identical file (ETag):", "file", relativePath)
 					return nil
 				}
 			}
@@ -381,7 +380,7 @@ func (p *S3DeployProvider) conditionalUploadWithRetry(ctx context.Context, s3Cli
 		_, err = uploader.Upload(ctx, &inputCopy)
 		if err == nil {
 			// Upload succeeded
-			fmt.Printf("Uploaded updated object %s\n", relativePath)
+			slog.Debug("Uploaded updated object:", "file", relativePath)
 			return nil
 		}
 
