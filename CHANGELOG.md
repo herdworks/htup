@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.18.1 (2026-04-27)
+
 * Changed JSON and YAML provider decoding to parse config passively; provider engines are resolved during validation, planning, and deployment.
 
 ## v0.18.0 (2026-04-27)
