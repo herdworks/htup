@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog], and this project adheres to [Semantic Versioning].
 
-## Unreleased
+## v0.18.0 (2026-04-27)
 
 Complete redesign of the `hyperproviders` package.
 Every exported type changes; the `hypertemplates-go` dependency is removed entirely.
