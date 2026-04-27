@@ -1,0 +1,108 @@
+package hosting
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"strings"
+	"testing"
+)
+
+func TestBeginDeployment_UsesEnvironmentName(t *testing.T) {
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	_, finish := BeginDeployment(context.Background(), "production")
+	finish(nil)
+
+	want := "[deployment] environment \"production\" starting\n[deployment] environment \"production\" completed\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("log output = %q, want %q", got, want)
+	}
+}
+
+func TestBeginDeployment_WithoutEnvironmentName(t *testing.T) {
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	_, finish := BeginDeployment(context.Background(), "")
+	finish(nil)
+
+	want := "[deployment] starting\n[deployment] completed\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("log output = %q, want %q", got, want)
+	}
+}
+
+func TestBeginDeployment_NestedDeployDoesNotDuplicateStartOrComplete(t *testing.T) {
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	ctx, finish := BeginDeployment(context.Background(), "production")
+	_, nestedFinish := BeginDeployment(ctx, "production")
+	nestedFinish(nil)
+	finish(nil)
+
+	got := buf.String()
+	if count := strings.Count(got, "starting"); count != 1 {
+		t.Fatalf("starting line count = %d, want 1 in %q", count, got)
+	}
+	if count := strings.Count(got, "completed"); count != 1 {
+		t.Fatalf("completed line count = %d, want 1 in %q", count, got)
+	}
+}
+
+func TestBeginDeployment_LogsFailedAfterError(t *testing.T) {
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	_, finish := BeginDeployment(context.Background(), "production")
+	finish(context.Canceled)
+
+	got := buf.String()
+	if !strings.Contains(got, "failed") {
+		t.Fatalf("log output = %q, want failed", got)
+	}
+}
+
+func TestProviderLogsQuoteValues(t *testing.T) {
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	file := mkFile(t, t.TempDir(), "blog/index.html")
+	provider := &Provider{Name: "assets", Kind: "s3"}
+	ctx, finish := BeginDeployment(context.Background(), "production")
+	LogProvider(ctx, provider, "hosting", "assets", "ready")
+	LogSecret(ctx, provider, "access_key_id", "found")
+	LogFile(ctx, provider, file, "included")
+	LogResource(ctx, provider, "https://example.com/blog/index.html", "text/html", "completed")
+	finish(nil)
+
+	want := "[deployment] environment \"production\" starting\n" +
+		"[provider/s3/assets] hosting \"assets\" ready\n" +
+		"[provider/s3/assets] secret \"access_key_id\" found\n" +
+		"[provider/s3/assets] file \"blog/index.html\" included\n" +
+		"[provider/s3/assets] resource \"https://example.com/blog/index.html\" type \"text/html\" completed\n" +
+		"[deployment] environment \"production\" completed\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("log output = %q, want %q", got, want)
+	}
+}
+
+func setDeployLogOutput(w io.Writer) func() {
+	deployLogOutput.Lock()
+	previous := deployLogOutput.w
+	deployLogOutput.w = w
+	deployLogOutput.Unlock()
+
+	return func() {
+		deployLogOutput.Lock()
+		deployLogOutput.w = previous
+		deployLogOutput.Unlock()
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/herdworks/hyperproviders-go/hosting"
 )
 
 // Environment is a named deployment target with one or more providers.
@@ -19,10 +21,12 @@ type Environment struct {
 // deployment root and owns its file discovery/filtering. Errors from individual
 // providers are aggregated with errors.Join — one provider failing does not
 // prevent the others from running. Respects ctx cancellation.
-func (e *Environment) Deploy(ctx context.Context, root string, session *Session) error {
+func (e *Environment) Deploy(ctx context.Context, root string, session *Session) (err error) {
 	if len(e.Providers) == 0 {
 		return fmt.Errorf("environment %q has no providers", e.Name)
 	}
+	ctx, finish := hosting.BeginDeployment(ctx, e.Name)
+	defer func() { finish(err) }()
 
 	errs := make([]error, len(e.Providers))
 	var wg sync.WaitGroup
@@ -37,7 +41,8 @@ func (e *Environment) Deploy(ctx context.Context, root string, session *Session)
 	}
 	wg.Wait()
 
-	return errors.Join(errs...)
+	err = errors.Join(errs...)
+	return err
 }
 
 // Plan returns each provider's deployment-relative paths after discovery and

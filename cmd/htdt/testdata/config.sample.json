@@ -7,6 +7,7 @@
           "kind": "s3",
           "name": "prod-assets",
           "endpoint": "https://<accountid>.r2.cloudflarestorage.com",
+          "base_url": "https://assets.example.com",
           "config": {
             "bucket": "my-site-assets",
             "region": "auto",
@@ -27,8 +28,10 @@
           "kind": "git",
           "name": "prod-pages",
           "endpoint": "git@github.com:acme/site.git",
+          "base_url": "https://example.com",
           "config": {
             "branch": "gh-pages",
+            "publish_dir": ".",
             "author_name": "hyperproviders bot",
             "author_email": "bot@example.com",
             "tag_enabled": true,
@@ -50,6 +53,7 @@
           "kind": "s3",
           "name": "staging-assets",
           "endpoint": "https://<accountid>.r2.cloudflarestorage.com",
+          "base_url": "https://staging-assets.example.com",
           "config": {
             "bucket": "my-site-staging",
             "region": "auto",

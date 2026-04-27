@@ -173,13 +173,22 @@ func (f *File) loadMeta() {
 //  2. content sniff via net/http.DetectContentType on the first 512 bytes
 //  3. fallback to application/octet-stream
 func detectMimetype(path string, head []byte) string {
-	if m := mimetypeByExtension(strings.ToLower(filepath.Ext(path))); m != "" {
+	if m := MimetypeForPath(path); m != "application/octet-stream" {
 		return m
 	}
 	if len(head) > 0 {
 		if m := http.DetectContentType(head); m != "" && m != "application/octet-stream" {
 			return m
 		}
+	}
+	return "application/octet-stream"
+}
+
+// MimetypeForPath returns the MIME type implied by path's extension, falling
+// back to application/octet-stream.
+func MimetypeForPath(path string) string {
+	if m := mimetypeByExtension(strings.ToLower(filepath.Ext(path))); m != "" {
+		return m
 	}
 	return "application/octet-stream"
 }

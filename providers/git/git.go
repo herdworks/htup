@@ -13,9 +13,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -37,6 +39,10 @@ const (
 func init() {
 	hosting.RegisterEngine(Kind, Engine{})
 }
+
+// deployLocks serializes same-remote/same-branch deploys in this process so
+// concurrent provider fan-out does not create non-fast-forward pushes.
+var deployLocks sync.Map
 
 // contextKey is the unexported key type for build-id propagation.
 type contextKey struct{ name string }
@@ -70,8 +76,7 @@ type settings struct {
 	TagPrefix     string
 	TagRetainLast int
 
-	CacheDir string
-	Fresh    bool
+	PublishDir string
 }
 
 type providerConfig struct {
@@ -83,16 +88,26 @@ type providerConfig struct {
 	TagPrefix     string `json:"tag_prefix,omitempty" yaml:"tag_prefix,omitempty"`
 	TagRetainLast int    `json:"tag_retain_last,omitempty" yaml:"tag_retain_last,omitempty"`
 
-	CacheDir string `json:"cache_dir,omitempty" yaml:"cache_dir,omitempty"`
-	Fresh    bool   `json:"fresh,omitempty" yaml:"fresh,omitempty"`
+	PublishDir string `json:"publish_dir,omitempty" yaml:"publish_dir,omitempty"`
 }
 
 func newSettings(provider *hosting.Provider) (*settings, error) {
 	cfg := &settings{}
 	if len(provider.Config) > 0 {
+		if _, ok := provider.Config["cache_dir"]; ok {
+			return nil, errors.New("git: cache_dir is not supported")
+		}
+		if _, ok := provider.Config["fresh"]; ok {
+			return nil, errors.New("git: fresh is not supported")
+		}
+
 		var decoded providerConfig
 		if err := provider.DecodeConfig(&decoded); err != nil {
 			return nil, fmt.Errorf("git: %w", err)
+		}
+		publishDir, err := normalizePublishDir(decoded.PublishDir)
+		if err != nil {
+			return nil, err
 		}
 		cfg = &settings{
 			Branch:        decoded.Branch,
@@ -101,8 +116,7 @@ func newSettings(provider *hosting.Provider) (*settings, error) {
 			TagEnabled:    decoded.TagEnabled,
 			TagPrefix:     decoded.TagPrefix,
 			TagRetainLast: decoded.TagRetainLast,
-			CacheDir:      decoded.CacheDir,
-			Fresh:         decoded.Fresh,
+			PublishDir:    publishDir,
 		}
 	}
 	if cfg.RemoteURL == "" {
@@ -111,7 +125,35 @@ func newSettings(provider *hosting.Provider) (*settings, error) {
 	if cfg.TagPrefix == "" {
 		cfg.TagPrefix = DefaultTagPrefix
 	}
+	if cfg.PublishDir == "" {
+		cfg.PublishDir = "."
+	}
 	return cfg, nil
+}
+
+func normalizePublishDir(dir string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ".", nil
+	}
+	slashDir := filepath.ToSlash(dir)
+	if filepath.IsAbs(dir) || strings.HasPrefix(slashDir, "/") {
+		return "", fmt.Errorf("git: publish_dir must be relative: %s", dir)
+	}
+
+	clean := path.Clean(slashDir)
+	if clean == "." {
+		return ".", nil
+	}
+	for _, part := range strings.Split(clean, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("git: publish_dir cannot escape the repository root: %s", dir)
+		}
+		if part == ".git" {
+			return "", fmt.Errorf("git: publish_dir cannot target .git: %s", dir)
+		}
+	}
+	return clean, nil
 }
 
 // Validate validates Git-specific configuration.
@@ -131,7 +173,7 @@ func (Engine) Validate(provider *hosting.Provider) error {
 
 // Deploy executes the full flow: open-or-clone, fetch, reset, overwrite working
 // tree, stage, commit, optionally tag, push, and optionally prune tags.
-func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, files []*hosting.File) error {
+func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File) error {
 	cfg, err := newSettings(provider)
 	if err != nil {
 		return err
@@ -141,31 +183,48 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		return fmt.Errorf("git: auth: %w", err)
 	}
 
-	workdir, err := cfg.workdir()
+	lock := deployLock(cfg.RemoteURL, cfg.Branch)
+	lock.Lock()
+	defer lock.Unlock()
+
+	workdir, err := cfg.workdir(root, provider.DisplayName())
 	if err != nil {
 		return fmt.Errorf("git: workdir: %w", err)
 	}
-	if cfg.Fresh {
-		if err := os.RemoveAll(workdir); err != nil {
-			return fmt.Errorf("git: clear workdir: %w", err)
-		}
-	}
 
+	remoteBranch := "origin/" + cfg.Branch
+	remoteResource := cfg.RemoteURL + "#" + cfg.Branch
+	hosting.LogProvider(ctx, provider, "open", remoteResource, "starting")
 	repo, wt, firstDeploy, err := openOrClone(ctx, workdir, cfg.RemoteURL, cfg.Branch, auth)
 	if err != nil {
+		hosting.LogProvider(ctx, provider, "open", remoteResource, "failed")
 		return fmt.Errorf("git: open repo: %w", err)
 	}
+	hosting.LogProvider(ctx, provider, "open", remoteResource, "completed")
 
 	if !firstDeploy {
-		if err := resetToOrigin(ctx, repo, wt, cfg.Branch, auth); err != nil {
+		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "starting")
+		if err := fetchOrigin(ctx, repo, auth); err != nil {
+			hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "failed")
+			return fmt.Errorf("git: fetch origin: %w", err)
+		}
+		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "completed")
+
+		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "starting")
+		if err := resetToOrigin(repo, wt, cfg.Branch); err != nil {
+			hosting.LogProvider(ctx, provider, "reset", remoteBranch, "failed")
 			return fmt.Errorf("git: reset to origin: %w", err)
 		}
+		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "completed")
+	} else {
+		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "skipped")
+		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "skipped")
 	}
 
-	if err := clearWorktree(wt.Filesystem); err != nil {
-		return fmt.Errorf("git: clear worktree: %w", err)
+	if err := clearPublishDir(wt.Filesystem, cfg.PublishDir); err != nil {
+		return fmt.Errorf("git: clear publish dir: %w", err)
 	}
-	if err := copyFiles(wt.Filesystem, files); err != nil {
+	if err := copyFiles(wt.Filesystem, cfg.PublishDir, files); err != nil {
 		return fmt.Errorf("git: write files: %w", err)
 	}
 	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
@@ -175,62 +234,86 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 	if err != nil {
 		return fmt.Errorf("git: status: %w", err)
 	}
+	if err := logResourceChanges(ctx, provider, cfg.PublishDir, files, status); err != nil {
+		return err
+	}
 	if status.IsClean() {
+		hosting.LogProvider(ctx, provider, "commit", cfg.Branch, "skipped")
+		hosting.LogProvider(ctx, provider, "push", remoteBranch, "skipped")
 		return nil
 	}
 
 	buildID := buildIDFrom(ctx)
 	sig := cfg.signature()
+	hosting.LogProvider(ctx, provider, "commit", cfg.Branch, "starting")
 	commitHash, err := wt.Commit(cfg.commitMessage(buildID), &git.CommitOptions{Author: sig, Committer: sig})
 	if err != nil {
+		hosting.LogProvider(ctx, provider, "commit", cfg.Branch, "failed")
 		return fmt.Errorf("git: commit: %w", err)
 	}
+	hosting.LogProvider(ctx, provider, "commit", shortHash(commitHash.String()), "completed")
 
 	var tagRef string
 	if cfg.TagEnabled {
 		tagRef = cfg.TagPrefix + buildID
+		hosting.LogProvider(ctx, provider, "tag", tagRef, "starting")
 		if _, err := repo.CreateTag(tagRef, commitHash, &git.CreateTagOptions{
 			Tagger:  sig,
 			Message: "hyperproviders deploy " + buildID,
 		}); err != nil {
+			hosting.LogProvider(ctx, provider, "tag", tagRef, "failed")
 			return fmt.Errorf("git: tag %s: %w", tagRef, err)
 		}
+		hosting.LogProvider(ctx, provider, "tag", tagRef, "completed")
 	}
 
 	pushOpts := &git.PushOptions{
 		RemoteName: "origin",
 		Auth:       auth,
-		RefSpecs:   pushRefSpecs(cfg.Branch, firstDeploy),
+		RefSpecs:   pushRefSpecs(cfg.Branch),
 	}
 	if tagRef != "" {
 		pushOpts.RefSpecs = append(pushOpts.RefSpecs, gogitconfig.RefSpec(fmt.Sprintf("refs/tags/%s:refs/tags/%s", tagRef, tagRef)))
 	}
-	if err := repo.PushContext(ctx, pushOpts); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return fmt.Errorf("git: push: %w", err)
+	hosting.LogProvider(ctx, provider, "push", remoteBranch, "starting")
+	if err := repo.PushContext(ctx, pushOpts); err != nil {
+		if errors.Is(err, git.NoErrAlreadyUpToDate) {
+			hosting.LogProvider(ctx, provider, "push", remoteBranch, "skipped")
+		} else {
+			hosting.LogProvider(ctx, provider, "push", remoteBranch, "failed")
+			return fmt.Errorf("git: push: %w", err)
+		}
+	} else {
+		hosting.LogProvider(ctx, provider, "push", remoteBranch, "completed")
 	}
 
 	if cfg.TagEnabled && cfg.TagRetainLast > 0 {
+		hosting.LogProvider(ctx, provider, "prune", cfg.TagPrefix, "starting")
 		if err := cfg.pruneTags(ctx, repo, auth); err != nil {
+			hosting.LogProvider(ctx, provider, "prune", cfg.TagPrefix, "failed")
 			return fmt.Errorf("git: prune tags: %w", err)
 		}
+		hosting.LogProvider(ctx, provider, "prune", cfg.TagPrefix, "completed")
 	}
 
 	return nil
 }
 
-// workdir returns the absolute cache path for this remote+branch. When
-// CacheDir is unset we hash the remote+branch under the OS user cache dir so
-// deploys to different targets don't collide.
-func (cfg *settings) workdir() (string, error) {
-	if cfg.CacheDir != "" {
-		return filepath.Abs(cfg.CacheDir)
-	}
-	base, err := os.UserCacheDir()
+// workdir returns the provider workspace path for the local clone. The
+// workspace lives under the deployment root's reserved ProviderWorkspaceDir so
+// callers don't need to configure platform-specific cache paths.
+func (cfg *settings) workdir(root, providerName string) (string, error) {
+	absRoot, err := filepath.Abs(filepath.Clean(root))
 	if err != nil {
 		return "", err
 	}
-	key := sha256.Sum256([]byte(cfg.RemoteURL + "\x00" + cfg.Branch))
-	return filepath.Join(base, "hyperproviders", "git", hex.EncodeToString(key[:16])), nil
+	key := sha256.Sum256([]byte(strings.Join([]string{
+		cfg.RemoteURL,
+		cfg.Branch,
+		cfg.PublishDir,
+		providerName,
+	}, "\x00")))
+	return filepath.Join(absRoot, hosting.ProviderWorkspaceDir, Kind, hex.EncodeToString(key[:16])), nil
 }
 
 func (cfg *settings) signature() *object.Signature {
@@ -249,12 +332,90 @@ func (cfg *settings) commitMessage(buildID string) string {
 	return fmt.Sprintf("deploy %s", buildID)
 }
 
+func logResourceChanges(ctx context.Context, provider *hosting.Provider, publishDir string, files []*hosting.File, status git.Status) error {
+	included := make(map[string]*hosting.File, len(files))
+	for _, file := range files {
+		included[repoPath(publishDir, file.RelPath())] = file
+	}
+
+	for _, file := range files {
+		mimetype, err := file.Mimetype()
+		if err != nil {
+			return fmt.Errorf("git: mimetype %s: %w", file.RelPath(), err)
+		}
+		repoRel := repoPath(publishDir, file.RelPath())
+		hosting.LogResource(ctx, provider, provider.DestinationURL(file.RelPath()), mimetype, gitResourceAction(status[repoRel]))
+	}
+
+	var deleted []string
+	for repoRel, fileStatus := range status {
+		if _, ok := included[repoRel]; ok {
+			continue
+		}
+		if gitResourceAction(fileStatus) != "delete" {
+			continue
+		}
+		publicRel, ok := publicRelFromRepoPath(publishDir, repoRel)
+		if ok {
+			deleted = append(deleted, publicRel)
+		}
+	}
+	sort.Strings(deleted)
+	for _, rel := range deleted {
+		hosting.LogResource(ctx, provider, provider.DestinationURL(rel), hosting.MimetypeForPath(rel), "delete")
+	}
+	return nil
+}
+
+func gitResourceAction(status *git.FileStatus) string {
+	if status == nil {
+		return "skip"
+	}
+	code := status.Staging
+	if code == git.Unmodified {
+		code = status.Worktree
+	}
+	switch code {
+	case git.Added, git.Untracked:
+		return "create"
+	case git.Modified, git.Renamed, git.Copied, git.UpdatedButUnmerged:
+		return "update"
+	case git.Deleted:
+		return "delete"
+	default:
+		return "skip"
+	}
+}
+
+func publicRelFromRepoPath(publishDir, repoRel string) (string, bool) {
+	if publishDir == "." {
+		return repoRel, true
+	}
+	prefix := publishDir + "/"
+	if !strings.HasPrefix(repoRel, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(repoRel, prefix), true
+}
+
+func shortHash(hash string) string {
+	if len(hash) <= 12 {
+		return hash
+	}
+	return hash[:12]
+}
+
+func deployLock(remoteURL, branch string) *sync.Mutex {
+	key := remoteURL + "\x00" + branch
+	lock, _ := deployLocks.LoadOrStore(key, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 // pushRefSpecs returns the RefSpecs for pushing the current HEAD of the local
 // branch to origin. The same RefSpec works for first-deploy and subsequent
 // deploys; go-git creates the remote ref when it does not exist.
-func pushRefSpecs(branch string, firstDeploy bool) []gogitconfig.RefSpec {
+func pushRefSpecs(branch string) []gogitconfig.RefSpec {
 	local := plumbing.NewBranchReferenceName(branch)
-	_ = firstDeploy
 	return []gogitconfig.RefSpec{gogitconfig.RefSpec(fmt.Sprintf("%s:%s", local, local))}
 }
 

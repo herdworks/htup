@@ -8,6 +8,8 @@ type ProviderFilter = hosting.Filter
 type FilterRules = hosting.FilterRules
 type File = hosting.File
 
+const ProviderWorkspaceDir = hosting.ProviderWorkspaceDir
+
 func RegisterHostingProviderEngine(kind string, engine HostingProviderEngine) {
 	hosting.RegisterEngine(kind, engine)
 }

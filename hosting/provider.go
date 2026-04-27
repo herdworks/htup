@@ -3,8 +3,11 @@ package hosting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/herdworks/hyperproviders-go/secrets"
@@ -12,12 +15,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ProviderWorkspaceDir is reserved for provider-managed deployment workspace
+// state under the deployment root. Discovery never deploys files from this
+// directory.
+const ProviderWorkspaceDir = ".provider"
+
 // Provider is a concrete provider configured for an environment. It owns
 // common provider fields and delegates provider-specific behavior to engine.
 type Provider struct {
 	Name     string          `json:"name"              yaml:"name"`
 	Kind     string          `json:"kind"              yaml:"kind"`
 	Endpoint string          `json:"endpoint"          yaml:"endpoint"`
+	BaseURL  string          `json:"base_url,omitempty" yaml:"base_url,omitempty"`
 	Config   map[string]any  `json:"config,omitempty"  yaml:"config,omitempty"`
 	Secrets  secrets.Secrets `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 	Filter   Filter          `json:"filter,omitempty"  yaml:"filter,omitempty"`
@@ -30,7 +39,7 @@ type Provider struct {
 // filtering, or environment fan-out.
 type Engine interface {
 	Validate(provider *Provider) error
-	Deploy(ctx context.Context, runtime *session.Session, provider *Provider, files []*File) error
+	Deploy(ctx context.Context, runtime *session.Session, provider *Provider, root string, files []*File) error
 }
 
 var hostingProviderEngines = struct {
@@ -96,6 +105,20 @@ func (p *Provider) DecodeConfig(target any) error {
 	return nil
 }
 
+// DestinationURL returns the human-readable deployment destination for rel.
+// BaseURL is a public URL prefix for deployed files. When BaseURL is unset, the
+// destination falls back to a root-relative path.
+func (p *Provider) DestinationURL(rel string) string {
+	if p == nil || p.BaseURL == "" {
+		return rootRelativeURL(rel)
+	}
+	joined, err := url.JoinPath(p.BaseURL, rel)
+	if err != nil {
+		return strings.TrimRight(p.BaseURL, "/") + "/" + strings.TrimLeft(rel, "/")
+	}
+	return joined
+}
+
 // Validate validates root-level fields, then delegates provider-specific
 // configuration checks to the provider engine.
 func (p *Provider) Validate() error {
@@ -119,10 +142,14 @@ func (p *Provider) ValidateRoot() error {
 	if err := p.attachEngine(); err != nil {
 		return err
 	}
-	if err := p.Filter.compile(); err != nil {
+	if _, err := p.Filter.compile(); err != nil {
 		return fmt.Errorf("provider %q filter: %w", p.DisplayName(), err)
 	}
 	return nil
+}
+
+func rootRelativeURL(rel string) string {
+	return (&url.URL{Path: "/" + strings.TrimLeft(rel, "/")}).String()
 }
 
 // DeploymentFiles returns the validated files this provider would deploy from
@@ -132,34 +159,82 @@ func (p *Provider) DeploymentFiles(root string) ([]*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return p.deploymentFiles(files)
+	return p.deploymentFiles(nil, files)
 }
 
-func (p *Provider) deploymentFiles(files []*File) ([]*File, error) {
+func (p *Provider) deploymentFiles(ctx context.Context, files []*File) ([]*File, error) {
+	filter, err := p.Filter.compile()
+	if err != nil {
+		return nil, err
+	}
+
 	kept := make([]*File, 0, len(files))
 	for _, file := range files {
-		ok, err := p.Filter.Match(file)
+		ok, err := filter.Match(file)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
+			LogFile(ctx, p, file, "included")
 			kept = append(kept, file)
+			continue
 		}
+		LogFile(ctx, p, file, "excluded")
 	}
 	return kept, nil
 }
 
 // Deploy discovers files, applies the provider filter, and delegates the
 // selected files to the provider engine.
-func (p *Provider) Deploy(ctx context.Context, root string, runtime *session.Session) error {
+func (p *Provider) Deploy(ctx context.Context, root string, runtime *session.Session) (err error) {
+	if !DeploymentActive(ctx) {
+		var finish func(error)
+		ctx, finish = BeginDeployment(ctx, "")
+		defer func() { finish(err) }()
+	}
+
+	LogProvider(ctx, p, "hosting", p.DisplayName(), "init")
+
 	if err := p.Validate(); err != nil {
+		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
 		return err
 	}
-	files, err := p.DeploymentFiles(root)
+	p.logSecrets(ctx, runtime)
+
+	files, err := walk(root)
 	if err != nil {
+		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
 		return err
 	}
-	return p.engine.Deploy(ctx, runtime, p, files)
+	files, err = p.deploymentFiles(ctx, files)
+	if err != nil {
+		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
+		return err
+	}
+	LogProvider(ctx, p, "hosting", p.DisplayName(), "ready")
+
+	if err := p.engine.Deploy(ctx, runtime, p, root, files); err != nil {
+		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
+		return err
+	}
+	return nil
+}
+
+func (p *Provider) logSecrets(ctx context.Context, runtime *session.Session) {
+	for _, secret := range p.Secrets {
+		state := "found"
+		_, err := runtime.ResolveSecret(ctx, secret.LookupKey())
+		switch {
+		case err == nil:
+		case errors.Is(err, secrets.ErrNotFound):
+			state = "not_found"
+		case errors.Is(err, secrets.ErrEmpty):
+			state = "empty"
+		default:
+			state = "error"
+		}
+		LogSecret(ctx, p, secret.Name, state)
+	}
 }
 
 // UnmarshalJSON decodes the common provider envelope and attaches the
@@ -212,9 +287,9 @@ func (p *Provider) attachEngine() error {
 type Filter struct {
 	Include FilterRules `json:"include,omitempty" yaml:"include,omitempty"`
 	Exclude FilterRules `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+}
 
-	once        sync.Once
-	compileErr  error
+type compiledFilter struct {
 	includePath []*regexp.Regexp
 	includeType []*regexp.Regexp
 	excludePath []*regexp.Regexp
@@ -228,55 +303,67 @@ type FilterRules struct {
 	Types []string `json:"types,omitempty" yaml:"types,omitempty"`
 }
 
-// Match reports whether file passes the filter. Regex compilation happens
-// exactly once per Filter and is cached. Returns an error if any
+// Match reports whether file passes the filter. Returns an error if any
 // pattern fails to compile.
 func (f *Filter) Match(file *File) (bool, error) {
-	if err := f.compile(); err != nil {
+	filter, err := f.compile()
+	if err != nil {
 		return false, err
 	}
+	return filter.Match(file)
+}
 
+func (f *compiledFilter) Match(file *File) (bool, error) {
 	path := file.RelPath()
 
-	var mime string
+	var mimetype string
 	needMime := len(f.includeType) > 0 || len(f.excludeType) > 0
 	if needMime {
 		m, err := file.Mimetype()
 		if err != nil {
 			return false, fmt.Errorf("mimetype %q: %w", path, err)
 		}
-		mime = m
+		mimetype = m
 	}
 
 	if len(f.includePath) > 0 && !matchAny(f.includePath, path, false) {
 		return false, nil
 	}
-	if len(f.includeType) > 0 && !matchAny(f.includeType, mime, false) {
+	if len(f.includeType) > 0 && !matchAny(f.includeType, mimetype, false) {
 		return false, nil
 	}
 	if matchAny(f.excludePath, path, false) {
 		return false, nil
 	}
-	if matchAny(f.excludeType, mime, false) {
+	if matchAny(f.excludeType, mimetype, false) {
 		return false, nil
 	}
 	return true, nil
 }
 
-func (f *Filter) compile() error {
-	f.once.Do(func() {
-		if f.includePath, f.compileErr = compileAll(f.Include.Paths); f.compileErr != nil {
-			return
-		}
-		if f.includeType, f.compileErr = compileAll(f.Include.Types); f.compileErr != nil {
-			return
-		}
-		if f.excludePath, f.compileErr = compileAll(f.Exclude.Paths); f.compileErr != nil {
-			return
-		}
-		f.excludeType, f.compileErr = compileAll(f.Exclude.Types)
-	})
-	return f.compileErr
+func (f *Filter) compile() (*compiledFilter, error) {
+	includePath, err := compileAll(f.Include.Paths)
+	if err != nil {
+		return nil, err
+	}
+	includeType, err := compileAll(f.Include.Types)
+	if err != nil {
+		return nil, err
+	}
+	excludePath, err := compileAll(f.Exclude.Paths)
+	if err != nil {
+		return nil, err
+	}
+	excludeType, err := compileAll(f.Exclude.Types)
+	if err != nil {
+		return nil, err
+	}
+	return &compiledFilter{
+		includePath: includePath,
+		includeType: includeType,
+		excludePath: excludePath,
+		excludeType: excludeType,
+	}, nil
 }
 
 // compileAll compiles a list of regex patterns, returning the first error.

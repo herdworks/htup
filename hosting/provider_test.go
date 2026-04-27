@@ -1,12 +1,16 @@
 package hosting
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/herdworks/hyperproviders-go/secrets"
 	"github.com/herdworks/hyperproviders-go/session"
 )
 
@@ -16,8 +20,18 @@ func (e *fakeEngine) Validate(provider *Provider) error {
 	return nil
 }
 
-func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, files []*File) error {
+func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
 	return nil
+}
+
+type failingEngine struct{}
+
+func (e *failingEngine) Validate(provider *Provider) error {
+	return nil
+}
+
+func (e *failingEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
+	return errors.New("deploy failed")
 }
 
 func mkFile(t *testing.T, root, rel string) *File {
@@ -225,6 +239,137 @@ func TestProvider_DecodeConfig(t *testing.T) {
 	}
 	if !cfg.UsePathStyle {
 		t.Error("UsePathStyle = false, want true")
+	}
+}
+
+func TestProvider_DestinationURL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		baseURL string
+		rel     string
+		want    string
+	}{
+		{
+			name: "empty base url",
+			rel:  "index.html",
+			want: "/index.html",
+		},
+		{
+			name: "empty base url with nested path",
+			rel:  "blog/index.html",
+			want: "/blog/index.html",
+		},
+		{
+			name:    "base url",
+			baseURL: "https://example.com",
+			rel:     "blog/index.html",
+			want:    "https://example.com/blog/index.html",
+		},
+		{
+			name:    "base url with path",
+			baseURL: "https://example.com/assets",
+			rel:     "blog/index.html",
+			want:    "https://example.com/assets/blog/index.html",
+		},
+		{
+			name:    "path escaping",
+			baseURL: "https://example.com",
+			rel:     "blog/hello world.html",
+			want:    "https://example.com/blog/hello%20world.html",
+		},
+		{
+			name: "root relative escaping",
+			rel:  "blog/hello world.html",
+			want: "/blog/hello%20world.html",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &Provider{BaseURL: tc.baseURL}
+			if got := provider.DestinationURL(tc.rel); got != tc.want {
+				t.Fatalf("DestinationURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	RegisterEngine("log-test", &fakeEngine{})
+
+	root := t.TempDir()
+	mkFile(t, root, "index.html")
+	mkFile(t, root, "style.css")
+
+	provider := &Provider{
+		Name:     "assets",
+		Kind:     "log-test",
+		Endpoint: "https://example.com",
+		Filter:   Filter{Include: FilterRules{Paths: []string{`\.html$`}}},
+		Secrets: secrets.Secrets{
+			{Name: "token", Key: "TOKEN"},
+			{Name: "missing"},
+		},
+	}
+	runtime := &session.Session{
+		Secrets: secrets.Values{
+			"TOKEN": secrets.String("value"),
+		},
+	}
+
+	if err := provider.Deploy(context.Background(), root, runtime); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		`[provider/log-test/assets] hosting "assets" init`,
+		`[provider/log-test/assets] secret "token" found`,
+		`[provider/log-test/assets] secret "missing" not_found`,
+		`[provider/log-test/assets] file "index.html" included`,
+		`[provider/log-test/assets] file "style.css" excluded`,
+		`[provider/log-test/assets] hosting "assets" ready`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("log output missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	RegisterEngine("fail-test", &failingEngine{})
+
+	root := t.TempDir()
+	mkFile(t, root, "index.html")
+
+	provider := &Provider{
+		Name:     "assets",
+		Kind:     "fail-test",
+		Endpoint: "https://example.com",
+	}
+	err := provider.Deploy(context.Background(), root, nil)
+	if err == nil {
+		t.Fatal("Deploy() error = nil, want error")
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		`[deployment] starting`,
+		`[provider/fail-test/assets] hosting "assets" failed`,
+		`[deployment] failed`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("log output missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `environment ""`) {
+		t.Fatalf("log output contains empty environment name:\n%s", got)
 	}
 }
 

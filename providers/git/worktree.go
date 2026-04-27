@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
@@ -100,13 +99,18 @@ func isBranchMissing(err error) bool {
 	return false
 }
 
-// resetToOrigin fetches the remote and hard-resets the working tree to
-// origin/<branch>. Used on every non-first deploy.
-func resetToOrigin(ctx context.Context, repo *git.Repository, wt *git.Worktree, branch string, auth transport.AuthMethod) error {
+// fetchOrigin fetches refs from origin. A no-op fetch is considered success.
+func fetchOrigin(ctx context.Context, repo *git.Repository, auth transport.AuthMethod) error {
 	err := repo.FetchContext(ctx, &git.FetchOptions{RemoteName: "origin", Auth: auth})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return err
 	}
+	return nil
+}
+
+// resetToOrigin hard-resets the working tree to origin/<branch>. Used on every
+// non-first deploy.
+func resetToOrigin(repo *git.Repository, wt *git.Worktree, branch string) error {
 	ref, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", branch), true)
 	if err != nil {
 		return err
@@ -133,6 +137,23 @@ func clearWorktree(fs billy.Filesystem) error {
 	return nil
 }
 
+func clearPublishDir(fs billy.Filesystem, publishDir string) error {
+	if publishDir == "." {
+		return clearWorktree(fs)
+	}
+
+	if _, err := fs.Stat(publishDir); err != nil {
+		if os.IsNotExist(err) {
+			return fs.MkdirAll(publishDir, 0o755)
+		}
+		return err
+	}
+	if err := removeAll(fs, publishDir); err != nil {
+		return err
+	}
+	return fs.MkdirAll(publishDir, 0o755)
+}
+
 func removeAll(fs billy.Filesystem, rel string) error {
 	info, err := fs.Stat(rel)
 	if err != nil {
@@ -153,12 +174,12 @@ func removeAll(fs billy.Filesystem, rel string) error {
 	return fs.Remove(rel)
 }
 
-// copyFiles writes each hosting.File into fs at its RelPath. Intermediate
+// copyFiles writes each hosting.File into fs under publishDir. Intermediate
 // directories are created as needed.
-func copyFiles(fs billy.Filesystem, files []*hosting.File) error {
+func copyFiles(fs billy.Filesystem, publishDir string, files []*hosting.File) error {
 	for _, file := range files {
-		rel := file.RelPath()
-		if err := fs.MkdirAll(filepath.ToSlash(filepath.Dir(rel)), 0o755); err != nil {
+		rel := repoPath(publishDir, file.RelPath())
+		if err := fs.MkdirAll(path.Dir(rel), 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", rel, err)
 		}
 		if err := copyFile(fs, file, rel); err != nil {
@@ -166,6 +187,13 @@ func copyFiles(fs billy.Filesystem, files []*hosting.File) error {
 		}
 	}
 	return nil
+}
+
+func repoPath(publishDir, rel string) string {
+	if publishDir == "." {
+		return rel
+	}
+	return path.Join(publishDir, rel)
 }
 
 func copyFile(fs billy.Filesystem, file *hosting.File, rel string) error {

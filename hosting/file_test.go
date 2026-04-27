@@ -164,6 +164,34 @@ func TestWalk_DeterministicAndRelative(t *testing.T) {
 	}
 }
 
+func TestWalk_IgnoresProviderWorkspaceDir(t *testing.T) {
+	root := t.TempDir()
+	paths := map[string]string{
+		"index.html":                             "deploy me",
+		ProviderWorkspaceDir + "/git/cache/file": "ignore me",
+	}
+	for rel, content := range paths {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	files, err := walk(root)
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("Walk returned %d files, want 1", len(files))
+	}
+	if got := files[0].RelPath(); got != "index.html" {
+		t.Fatalf("RelPath = %q, want index.html", got)
+	}
+}
+
 func TestWalk_RejectsSymlink(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.txt")

@@ -139,7 +139,7 @@ func (Engine) Validate(provider *hosting.Provider) error {
 // Deploy discovers files under root, applies the provider filter, and uploads
 // every selected file concurrently, bounded by the provider's Workers setting
 // or the S3 default. Respects ctx.
-func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, files []*hosting.File) error {
+func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File) error {
 	cfg, err := newSettings(provider)
 	if err != nil {
 		return err
@@ -162,7 +162,7 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		}
 		g.Go(func() error {
 			defer func() { <-sem }()
-			return engine.putOne(ctx, client, cfg, file)
+			return engine.putOne(ctx, client, provider, cfg, file)
 		})
 	}
 	return g.Wait()
@@ -175,8 +175,14 @@ func workersOrDefault(workers int) int {
 	return DefaultWorkers
 }
 
-func (engine Engine) putOne(ctx context.Context, client *awss3.Client, cfg *settings, file *hosting.File) error {
+func (engine Engine) putOne(ctx context.Context, client *awss3.Client, provider *hosting.Provider, cfg *settings, file *hosting.File) error {
 	key := file.RelPath()
+	destination := provider.DestinationURL(key)
+
+	contentType, err := file.Mimetype()
+	if err != nil {
+		return fmt.Errorf("s3: mimetype %s: %w", key, err)
+	}
 
 	if cfg.ConditionalMode == ConditionalModeETag {
 		skip, err := engine.skipByETag(ctx, client, cfg, key, file)
@@ -184,20 +190,18 @@ func (engine Engine) putOne(ctx context.Context, client *awss3.Client, cfg *sett
 			return fmt.Errorf("s3: head %s: %w", key, err)
 		}
 		if skip {
+			hosting.LogResource(ctx, provider, destination, contentType, "skipped")
 			return nil
 		}
 	}
+
+	hosting.LogResource(ctx, provider, destination, contentType, "put")
 
 	body, err := file.Open()
 	if err != nil {
 		return fmt.Errorf("s3: open %s: %w", key, err)
 	}
 	defer body.Close()
-
-	contentType, err := file.Mimetype()
-	if err != nil {
-		return fmt.Errorf("s3: mimetype %s: %w", key, err)
-	}
 
 	input := &awss3.PutObjectInput{
 		Bucket:      aws.String(cfg.Bucket),
@@ -212,6 +216,7 @@ func (engine Engine) putOne(ctx context.Context, client *awss3.Client, cfg *sett
 	if _, err := client.PutObject(ctx, input); err != nil {
 		return fmt.Errorf("s3: put %s: %w", key, err)
 	}
+	hosting.LogResource(ctx, provider, destination, contentType, "completed")
 	return nil
 }
 

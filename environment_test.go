@@ -21,7 +21,7 @@ func (e *fakeHostingProviderEngine) Validate(provider *HostingProvider) error {
 	return nil
 }
 
-func (e *fakeHostingProviderEngine) Deploy(ctx context.Context, session *Session, provider *HostingProvider, files []*File) error {
+func (e *fakeHostingProviderEngine) Deploy(ctx context.Context, session *Session, provider *HostingProvider, root string, files []*File) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, files)

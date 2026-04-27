@@ -16,6 +16,7 @@ func TestLoadConfig_JSON(t *testing.T) {
 						"kind": "s3",
 						"name": "assets",
 						"endpoint": "https://example.com",
+						"base_url": "https://assets.example.com",
 						"config": { "bucket": "assets" }
 					}
 				]
@@ -39,6 +40,7 @@ environments:
       - kind: s3
         name: assets
         endpoint: https://example.com
+        base_url: https://assets.example.com
         config:
           bucket: assets
 `)
@@ -59,6 +61,7 @@ environments:
       - kind: s3
         name: assets
         endpoint: https://example.com
+        base_url: https://assets.example.com
         config:
           bucket: assets
 `)
@@ -97,5 +100,8 @@ func assertLoadedConfig(t *testing.T, cfg *Config) {
 	}
 	if provider.DisplayName() != "assets" {
 		t.Errorf("provider.DisplayName = %q, want assets", provider.DisplayName())
+	}
+	if provider.BaseURL != "https://assets.example.com" {
+		t.Errorf("provider.BaseURL = %q, want assets base URL", provider.BaseURL)
 	}
 }
