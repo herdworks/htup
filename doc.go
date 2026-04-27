@@ -10,6 +10,6 @@
 // "blog/index.html" under every provider. Symlinks are rejected during discovery.
 //
 // Provider engine packages such as providers/s3 and providers/git register
-// their engines from init so JSON and YAML config can unmarshal directly into
-// deployable environments.
+// their engines from init so validation, planning, and deployment can bind
+// provider-specific behavior.
 package hyperproviders

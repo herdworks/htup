@@ -85,8 +85,8 @@ When `Session.SecretProviders` is omitted, HyperProviders resolves secrets only
 from `Session.Secrets`. Add `providers/env.New()` explicitly when environment
 variable lookup should be available. Add `providers/runtime.New()` explicitly
 when runtime secrets should participate in a custom precedence list.
-Import each provider engine package you need before unmarshalling config so its
-`init` registration makes that `kind` available.
+Import each provider engine package you need before validating, planning, or
+deploying so its `init` registration makes that `kind` available.
 
 ## `htdt` — HyperTexting Deploy Tool
 

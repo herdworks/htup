@@ -199,6 +199,24 @@ func TestProvider_ValidateRoot(t *testing.T) {
 	}
 }
 
+func TestProvider_DeploymentFilesValidatesRoot(t *testing.T) {
+	root := t.TempDir()
+	mkFile(t, root, "index.html")
+
+	provider := &Provider{
+		Name:     "unknown",
+		Kind:     "unknown-deployment-files",
+		Endpoint: "https://example.com",
+	}
+	err := func() error {
+		_, err := provider.DeploymentFiles(root)
+		return err
+	}()
+	if !errors.Is(err, ErrUnknownKind) {
+		t.Fatalf("DeploymentFiles error = %v, want ErrUnknownKind", err)
+	}
+}
+
 func TestProvider_NameFallback(t *testing.T) {
 	p := &Provider{Kind: "test"}
 	if p.DisplayName() != "test" {

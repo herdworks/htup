@@ -50,6 +50,9 @@ func (e *Environment) Deploy(ctx context.Context, root string, session *Session)
 func (e *Environment) Plan(root string) (map[string][]string, error) {
 	plan := map[string][]string{}
 	for _, provider := range e.Providers {
+		if err := provider.Validate(); err != nil {
+			return nil, fmt.Errorf("provider %q: %w", provider.DisplayName(), err)
+		}
 		files, err := provider.DeploymentFiles(root)
 		if err != nil {
 			return nil, fmt.Errorf("provider %q files: %w", provider.DisplayName(), err)

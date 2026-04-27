@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog], and this project adheres to [Semantic Versioning].
 
+## Unreleased
+
+* Changed JSON and YAML provider decoding to parse config passively; provider engines are resolved during validation, planning, and deployment.
+
 ## v0.18.0 (2026-04-27)
 
 Complete redesign of the `hyperproviders` package.

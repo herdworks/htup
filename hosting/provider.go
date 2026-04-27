@@ -49,8 +49,9 @@ var hostingProviderEngines = struct {
 	known: map[string]Engine{},
 }
 
-// RegisterEngine registers engine for kind. Concrete provider
-// packages call this from init so config unmarshalling can bind providers.
+// RegisterEngine registers engine for kind. Concrete provider packages call
+// this from init so validation, planning, and deployment can bind provider
+// behavior.
 func RegisterEngine(kind string, engine Engine) {
 	if kind == "" {
 		panic("hyperproviders: RegisterEngine with empty kind")
@@ -155,6 +156,9 @@ func rootRelativeURL(rel string) string {
 // DeploymentFiles returns the validated files this provider would deploy from
 // root after applying the provider filter.
 func (p *Provider) DeploymentFiles(root string) ([]*File, error) {
+	if err := p.ValidateRoot(); err != nil {
+		return nil, err
+	}
 	files, err := walk(root)
 	if err != nil {
 		return nil, err
@@ -237,8 +241,9 @@ func (p *Provider) logSecrets(ctx context.Context, runtime *session.Session) {
 	}
 }
 
-// UnmarshalJSON decodes the common provider envelope and attaches the
-// registered engine for its kind.
+// UnmarshalJSON decodes the common provider envelope. Provider engines are
+// resolved during validation, planning, and deployment, not while parsing
+// config.
 func (p *Provider) UnmarshalJSON(data []byte) error {
 	type hostingProvider Provider
 	var decoded hostingProvider
@@ -246,11 +251,13 @@ func (p *Provider) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = Provider(decoded)
-	return p.attachEngine()
+	p.engine = nil
+	return nil
 }
 
-// UnmarshalYAML decodes the common provider envelope and attaches the
-// registered engine for its kind.
+// UnmarshalYAML decodes the common provider envelope. Provider engines are
+// resolved during validation, planning, and deployment, not while parsing
+// config.
 func (p *Provider) UnmarshalYAML(value *yaml.Node) error {
 	type hostingProvider Provider
 	var decoded hostingProvider
@@ -258,7 +265,8 @@ func (p *Provider) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*p = Provider(decoded)
-	return p.attachEngine()
+	p.engine = nil
+	return nil
 }
 
 func (p *Provider) attachEngine() error {

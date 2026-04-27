@@ -73,7 +73,29 @@ func TestEnvironment_Deploy_FansOutWithFilters(t *testing.T) {
 	}
 }
 
-func TestEnvironment_UnmarshalJSON_AttachesProviderEngine(t *testing.T) {
+func TestEnvironment_PlanValidatesProviders(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	env := &Environment{
+		Name: "test",
+		Providers: []*HostingProvider{
+			{
+				Name:     "unknown",
+				Kind:     "unknown-plan",
+				Endpoint: "https://example.com",
+			},
+		},
+	}
+	_, err := env.Plan(root)
+	if !errors.Is(err, ErrUnknownKind) {
+		t.Fatalf("Plan error = %v, want ErrUnknownKind", err)
+	}
+}
+
+func TestEnvironment_UnmarshalJSON_DecodesProviders(t *testing.T) {
 	RegisterHostingProviderEngine("json-fake", &fakeHostingProviderEngine{})
 
 	var env Environment
@@ -101,7 +123,7 @@ func TestEnvironment_UnmarshalJSON_AttachesProviderEngine(t *testing.T) {
 	}
 }
 
-func TestEnvironment_UnmarshalYAML_AttachesProviderEngine(t *testing.T) {
+func TestEnvironment_UnmarshalYAML_DecodesProviders(t *testing.T) {
 	RegisterHostingProviderEngine("yaml-fake", &fakeHostingProviderEngine{})
 
 	var env Environment
@@ -126,19 +148,38 @@ providers:
 	}
 }
 
-func TestHostingProvider_UnmarshalJSON_ErrorsForMissingKind(t *testing.T) {
+func TestHostingProvider_UnmarshalJSON_AllowsMissingKind(t *testing.T) {
 	var provider HostingProvider
-	err := json.Unmarshal([]byte(`{"name":"missing","endpoint":"https://example.com","config":{}}`), &provider)
-	if !errors.Is(err, ErrMissingKind) {
-		t.Fatalf("error = %v, want ErrMissingKind", err)
+	if err := json.Unmarshal([]byte(`{"name":"missing","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if err := provider.Validate(); !errors.Is(err, ErrMissingKind) {
+		t.Fatalf("Validate error = %v, want ErrMissingKind", err)
 	}
 }
 
-func TestHostingProvider_UnmarshalJSON_ErrorsForUnknownKind(t *testing.T) {
+func TestHostingProvider_UnmarshalJSON_AllowsUnknownKind(t *testing.T) {
 	var provider HostingProvider
-	err := json.Unmarshal([]byte(`{"kind":"unknown","name":"p","endpoint":"https://example.com","config":{}}`), &provider)
-	if !errors.Is(err, ErrUnknownKind) {
-		t.Fatalf("error = %v, want ErrUnknownKind", err)
+	if err := json.Unmarshal([]byte(`{"kind":"unknown","name":"p","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if err := provider.Validate(); !errors.Is(err, ErrUnknownKind) {
+		t.Fatalf("Validate error = %v, want ErrUnknownKind", err)
+	}
+}
+
+func TestHostingProvider_UnmarshalYAML_AllowsUnknownKind(t *testing.T) {
+	var provider HostingProvider
+	if err := yaml.Unmarshal([]byte(`
+kind: unknown
+name: p
+endpoint: https://example.com
+config: {}
+`), &provider); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if err := provider.Validate(); !errors.Is(err, ErrUnknownKind) {
+		t.Fatalf("Validate error = %v, want ErrUnknownKind", err)
 	}
 }
 
@@ -146,9 +187,11 @@ func TestHostingProvider_UnmarshalJSON_ClearsStaleEngine(t *testing.T) {
 	RegisterHostingProviderEngine("fresh", &fakeHostingProviderEngine{})
 
 	provider := HostingProvider{Kind: "stale"}
-	err := json.Unmarshal([]byte(`{"kind":"unknown","name":"p","endpoint":"https://example.com","config":{}}`), &provider)
-	if !errors.Is(err, ErrUnknownKind) {
-		t.Fatalf("error = %v, want ErrUnknownKind", err)
+	if err := json.Unmarshal([]byte(`{"kind":"unknown","name":"p","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
+		t.Fatalf("Unmarshal unknown: %v", err)
+	}
+	if err := provider.Validate(); !errors.Is(err, ErrUnknownKind) {
+		t.Fatalf("Validate unknown error = %v, want ErrUnknownKind", err)
 	}
 
 	if err := json.Unmarshal([]byte(`{"kind":"fresh","name":"p","endpoint":"https://example.com","config":{}}`), &provider); err != nil {

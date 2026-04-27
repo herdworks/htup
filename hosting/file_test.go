@@ -226,6 +226,8 @@ func TestWalk_RejectsSymlinkDirectory(t *testing.T) {
 }
 
 func TestProvider_DeploymentFilesFilters(t *testing.T) {
+	RegisterEngine("file-test", &fakeEngine{})
+
 	root := t.TempDir()
 	for _, p := range []string{"site/a.html", "site/b.css", "site/image.png", "site/.git/config"} {
 		abs := filepath.Join(root, p)
@@ -238,8 +240,10 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 	}
 
 	provider := &Provider{
-		Kind:   "test",
-		Filter: Filter{Exclude: FilterRules{Paths: []string{`\.git/`}}},
+		Name:     "files",
+		Kind:     "file-test",
+		Endpoint: "https://example.com",
+		Filter:   Filter{Exclude: FilterRules{Paths: []string{`\.git/`}}},
 	}
 	files, err := provider.DeploymentFiles(mustAbs(t, root))
 	if err != nil {
@@ -252,8 +256,10 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 	}
 
 	provider = &Provider{
-		Kind:   "test",
-		Filter: Filter{Include: FilterRules{Paths: []string{`\.html$`}}},
+		Name:     "files",
+		Kind:     "file-test",
+		Endpoint: "https://example.com",
+		Filter:   Filter{Include: FilterRules{Paths: []string{`\.html$`}}},
 	}
 	only, err := provider.DeploymentFiles(root)
 	if err != nil {
