@@ -82,6 +82,54 @@ func TestGitProvider_FirstDeploy(t *testing.T) {
 	}
 }
 
+func TestGitProvider_FirstDeployToMissingBranchDoesNotTouchExistingBranch(t *testing.T) {
+	remote := setupLocalRemote(t)
+	mainSource := t.TempDir()
+	seedSource(t, mainSource, map[string]string{"README.md": "main branch"})
+
+	mainProvider := newProvider(t, remote)
+	if err := mainProvider.Deploy(context.Background(), mainSource, nil); err != nil {
+		t.Fatalf("seed main Deploy: %v", err)
+	}
+
+	publicSource := t.TempDir()
+	seedSource(t, publicSource, map[string]string{"index.html": "<h1>public</h1>"})
+
+	publicProvider := newProvider(t, remote)
+	publicProvider.Config["branch"] = "public"
+	if err := publicProvider.Deploy(context.Background(), publicSource, nil); err != nil {
+		t.Fatalf("public Deploy: %v", err)
+	}
+
+	verifyMainDir := t.TempDir()
+	if _, err := git.PlainClone(verifyMainDir, false, &git.CloneOptions{
+		URL:           remote,
+		ReferenceName: plumbing.NewBranchReferenceName("main"),
+	}); err != nil {
+		t.Fatalf("PlainClone main: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(verifyMainDir, "README.md")); err != nil || string(got) != "main branch" {
+		t.Fatalf("main README.md = %q, %v; want preserved content", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(verifyMainDir, "index.html")); !os.IsNotExist(err) {
+		t.Fatalf("main index.html should be absent, got err %v", err)
+	}
+
+	verifyPublicDir := t.TempDir()
+	if _, err := git.PlainClone(verifyPublicDir, false, &git.CloneOptions{
+		URL:           remote,
+		ReferenceName: plumbing.NewBranchReferenceName("public"),
+	}); err != nil {
+		t.Fatalf("PlainClone public: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(verifyPublicDir, "index.html")); err != nil || string(got) != "<h1>public</h1>" {
+		t.Fatalf("public index.html = %q, %v; want deployed content", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(verifyPublicDir, "README.md")); !os.IsNotExist(err) {
+		t.Fatalf("public README.md should be absent, got err %v", err)
+	}
+}
+
 func TestGitProvider_SecondDeployIsNoOpWhenUnchanged(t *testing.T) {
 	remote := setupLocalRemote(t)
 	source := t.TempDir()

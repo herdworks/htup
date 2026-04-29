@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Fixed Git deploys to create a configured branch that is missing from a non-empty remote repository.
+
 ## v0.18.1 (2026-04-27)
 
 * Changed JSON and YAML provider decoding to parse config passively; provider engines are resolved during validation, planning, and deployment.

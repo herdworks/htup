@@ -93,6 +93,9 @@ func isBranchMissing(err error) bool {
 	if errors.Is(err, plumbing.ErrReferenceNotFound) {
 		return true
 	}
+	if errors.Is(err, git.NoMatchingRefSpecError{}) {
+		return true
+	}
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		return true
 	}
