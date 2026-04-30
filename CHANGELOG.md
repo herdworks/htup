@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.19.0 (2026-04-30)
+
 * Added `HostingProviders` as the primary deployment surface, with provider names supplied by map keys and `HostingEnvironment` reduced to an ordered provider-name selection.
 * Changed provider filters from nested `filter.include` / `filter.exclude` fields to root-level `include` / `exclude` fields; exclude rules continue to win when both include and exclude match.
 * Removed `HostingProvider.Name`; callers name providers with `HostingProviders` map keys.
