@@ -9,6 +9,7 @@ import (
 )
 
 type deployLogContextKey struct{}
+type providerNameContextKey struct{}
 
 type deployLogState struct {
 	environment string
@@ -56,7 +57,7 @@ func LogProvider(ctx context.Context, provider *Provider, resource, name, state 
 	if !deployLogActive(ctx) {
 		return
 	}
-	logDeployf("%s %s %q %s\n", providerLogPrefix(provider), resource, name, state)
+	logDeployf("%s %s %q %s\n", providerLogPrefix(ctx, provider), resource, name, state)
 }
 
 // LogSecret writes one provider-scoped secret resolution line. It logs only the
@@ -78,14 +79,39 @@ func LogResource(ctx context.Context, provider *Provider, destination, mimetype,
 	if !deployLogActive(ctx) {
 		return
 	}
-	logDeployf("%s resource %q type %q %s\n", providerLogPrefix(provider), destination, mimetype, state)
+	logDeployf("%s resource %q type %q %s\n", providerLogPrefix(ctx, provider), destination, mimetype, state)
 }
 
-func providerLogPrefix(provider *Provider) string {
+// WithProviderName attaches the selected provider name to ctx for provider logs.
+func WithProviderName(ctx context.Context, name string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if name == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, providerNameContextKey{}, name)
+}
+
+// ProviderName returns the selected provider name from ctx, falling back to the
+// provider's direct display name.
+func ProviderName(ctx context.Context, provider *Provider) string {
+	if ctx != nil {
+		if name, ok := ctx.Value(providerNameContextKey{}).(string); ok && name != "" {
+			return name
+		}
+	}
+	if provider == nil {
+		return ""
+	}
+	return provider.DisplayName()
+}
+
+func providerLogPrefix(ctx context.Context, provider *Provider) string {
 	if provider == nil {
 		return "[provider//]"
 	}
-	return fmt.Sprintf("[provider/%s/%s]", provider.Kind, provider.DisplayName())
+	return fmt.Sprintf("[provider/%s/%s]", provider.Kind, ProviderName(ctx, provider))
 }
 
 func deployLogStateFrom(ctx context.Context) (*deployLogState, bool) {

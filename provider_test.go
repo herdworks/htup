@@ -42,26 +42,22 @@ func TestEnvironment_Deploy_FansOutWithFilters(t *testing.T) {
 	imgEngine := &fakeHostingProviderEngine{}
 	RegisterHostingProviderEngine("html-only", htmlEngine)
 	RegisterHostingProviderEngine("img-only", imgEngine)
-	env := &Environment{
-		Name: "test",
-		Providers: []*HostingProvider{
-			{
-				Name:     "html",
-				Kind:     "html-only",
-				Endpoint: "https://example.com/html",
-				Config:   map[string]any{},
-				Filter:   ProviderFilter{Include: FilterRules{Types: []string{"^text/html"}}},
-			},
-			{
-				Name:     "img",
-				Kind:     "img-only",
-				Endpoint: "https://example.com/img",
-				Config:   map[string]any{},
-				Filter:   ProviderFilter{Include: FilterRules{Types: []string{"^image/"}}},
-			},
+	env := HostingEnvironment{"html", "img"}
+	providers := HostingProviders{
+		"html": {
+			Kind:     "html-only",
+			Endpoint: "https://example.com/html",
+			Config:   map[string]any{},
+			Include:  FilterRules{Types: []string{"^text/html"}},
+		},
+		"img": {
+			Kind:     "img-only",
+			Endpoint: "https://example.com/img",
+			Config:   map[string]any{},
+			Include:  FilterRules{Types: []string{"^image/"}},
 		},
 	}
-	if err := env.Deploy(context.Background(), root, nil); err != nil {
+	if err := env.Deploy(context.Background(), providers, root, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -79,78 +75,95 @@ func TestEnvironment_PlanValidatesProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env := &Environment{
-		Name: "test",
-		Providers: []*HostingProvider{
-			{
-				Name:     "unknown",
-				Kind:     "unknown-plan",
-				Endpoint: "https://example.com",
-			},
+	env := HostingEnvironment{"unknown"}
+	providers := HostingProviders{
+		"unknown": {
+			Kind:     "unknown-plan",
+			Endpoint: "https://example.com",
 		},
 	}
-	_, err := env.Plan(root)
+	_, err := env.Plan(providers, root)
 	if !errors.Is(err, ErrUnknownKind) {
 		t.Fatalf("Plan error = %v, want ErrUnknownKind", err)
 	}
 }
 
-func TestEnvironment_UnmarshalJSON_DecodesProviders(t *testing.T) {
+func TestEnvironment_UnmarshalJSON_DecodesProviderNames(t *testing.T) {
 	RegisterHostingProviderEngine("json-fake", &fakeHostingProviderEngine{})
 
-	var env Environment
-	if err := json.Unmarshal([]byte(`{
-		"name": "e",
-		"providers": [
-			{
-				"kind": "json-fake",
-				"name": "myprov",
-				"endpoint": "https://example.com",
-				"config": {}
-			}
-		]
-	}`), &env); err != nil {
+	var env HostingEnvironment
+	if err := json.Unmarshal([]byte(`["pages", "assets"]`), &env); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if len(env.Providers) != 1 {
-		t.Fatalf("providers = %d, want 1", len(env.Providers))
-	}
-	if env.Providers[0].DisplayName() != "myprov" {
-		t.Errorf("name = %q, want myprov", env.Providers[0].DisplayName())
-	}
-	if err := env.Providers[0].Validate(); err != nil {
-		t.Fatalf("Validate: %v", err)
+	if len(env) != 2 || env[0] != "pages" || env[1] != "assets" {
+		t.Fatalf("environment = %#v, want pages/assets", env)
 	}
 }
 
-func TestEnvironment_UnmarshalYAML_DecodesProviders(t *testing.T) {
+func TestEnvironment_UnmarshalYAML_DecodesProviderNames(t *testing.T) {
 	RegisterHostingProviderEngine("yaml-fake", &fakeHostingProviderEngine{})
 
-	var env Environment
+	var env HostingEnvironment
 	if err := yaml.Unmarshal([]byte(`
-name: e
-providers:
-  - kind: yaml-fake
-    name: myprov
-    endpoint: https://example.com
-    config: {}
+- pages
+- assets
 `), &env); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if len(env.Providers) != 1 {
-		t.Fatalf("providers = %d, want 1", len(env.Providers))
+	if len(env) != 2 || env[0] != "pages" || env[1] != "assets" {
+		t.Fatalf("environment = %#v, want pages/assets", env)
 	}
-	if env.Providers[0].Kind != "yaml-fake" {
-		t.Errorf("kind = %q, want yaml-fake", env.Providers[0].Kind)
+}
+
+func TestHostingProviders_PlanUsesSelectionNames(t *testing.T) {
+	RegisterHostingProviderEngine("plan-name", &fakeHostingProviderEngine{})
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if err := env.Providers[0].Validate(); err != nil {
-		t.Fatalf("Validate: %v", err)
+
+	providers := HostingProviders{
+		"pages": {Kind: "plan-name", Endpoint: "https://example.com"},
+	}
+	selected, err := providers.Select([]string{"pages"})
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	plan, err := selected.Plan(root)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if _, ok := plan["pages"]; !ok {
+		t.Fatalf("plan keys = %#v, want pages", plan)
+	}
+}
+
+func TestHostingProviders_ResolveRejectsInvalidSelection(t *testing.T) {
+	providers := HostingProviders{
+		"nil": nil,
+		"ok":  {Kind: "test", Endpoint: "https://example.com"},
+	}
+	for _, tc := range []struct {
+		name  string
+		names []string
+	}{
+		{name: "empty", names: nil},
+		{name: "missing", names: []string{"missing"}},
+		{name: "nil provider", names: []string{"nil"}},
+		{name: "duplicate", names: []string{"ok", "ok"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := providers.Select(tc.names); err == nil {
+				t.Fatal("Select error = nil")
+			}
+		})
 	}
 }
 
 func TestHostingProvider_UnmarshalJSON_AllowsMissingKind(t *testing.T) {
 	var provider HostingProvider
-	if err := json.Unmarshal([]byte(`{"name":"missing","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
+	if err := json.Unmarshal([]byte(`{"endpoint":"https://example.com","config":{}}`), &provider); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	if err := provider.Validate(); !errors.Is(err, ErrMissingKind) {
@@ -160,7 +173,7 @@ func TestHostingProvider_UnmarshalJSON_AllowsMissingKind(t *testing.T) {
 
 func TestHostingProvider_UnmarshalJSON_AllowsUnknownKind(t *testing.T) {
 	var provider HostingProvider
-	if err := json.Unmarshal([]byte(`{"kind":"unknown","name":"p","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
+	if err := json.Unmarshal([]byte(`{"kind":"unknown","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	if err := provider.Validate(); !errors.Is(err, ErrUnknownKind) {
@@ -172,7 +185,6 @@ func TestHostingProvider_UnmarshalYAML_AllowsUnknownKind(t *testing.T) {
 	var provider HostingProvider
 	if err := yaml.Unmarshal([]byte(`
 kind: unknown
-name: p
 endpoint: https://example.com
 config: {}
 `), &provider); err != nil {
@@ -187,14 +199,14 @@ func TestHostingProvider_UnmarshalJSON_ClearsStaleEngine(t *testing.T) {
 	RegisterHostingProviderEngine("fresh", &fakeHostingProviderEngine{})
 
 	provider := HostingProvider{Kind: "stale"}
-	if err := json.Unmarshal([]byte(`{"kind":"unknown","name":"p","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
+	if err := json.Unmarshal([]byte(`{"kind":"unknown","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
 		t.Fatalf("Unmarshal unknown: %v", err)
 	}
 	if err := provider.Validate(); !errors.Is(err, ErrUnknownKind) {
 		t.Fatalf("Validate unknown error = %v, want ErrUnknownKind", err)
 	}
 
-	if err := json.Unmarshal([]byte(`{"kind":"fresh","name":"p","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
+	if err := json.Unmarshal([]byte(`{"kind":"fresh","endpoint":"https://example.com","config":{}}`), &provider); err != nil {
 		t.Fatalf("Unmarshal fresh: %v", err)
 	}
 	if err := provider.Validate(); err != nil {

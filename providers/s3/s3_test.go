@@ -13,7 +13,6 @@ import (
 func TestUnmarshalHostingProvider(t *testing.T) {
 	raw := []byte(`{
 		"kind": "s3",
-		"name": "prod",
 		"endpoint": "https://example.r2.cloudflarestorage.com",
 		"config": {
 			"bucket": "my-bucket",
@@ -55,7 +54,6 @@ func TestUnmarshalHostingProvider(t *testing.T) {
 
 func TestValidate_RequiresBucket(t *testing.T) {
 	provider := &hosting.Provider{
-		Name:     "test",
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config:   map[string]any{},
@@ -67,7 +65,6 @@ func TestValidate_RequiresBucket(t *testing.T) {
 
 func TestValidate_UsesBucketFromEndpointPath(t *testing.T) {
 	provider := &hosting.Provider{
-		Name:     "test",
 		Kind:     Kind,
 		Endpoint: "https://example.com/path-bucket",
 		Config:   map[string]any{},
@@ -91,7 +88,6 @@ func TestValidate_UsesBucketFromEndpointPath(t *testing.T) {
 
 func TestValidate_RejectsUnknownConditionalMode(t *testing.T) {
 	provider := &hosting.Provider{
-		Name:     "test",
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config: map[string]any{

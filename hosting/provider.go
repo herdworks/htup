@@ -23,13 +23,13 @@ const ProviderWorkspaceDir = ".provider"
 // Provider is a concrete provider configured for an environment. It owns
 // common provider fields and delegates provider-specific behavior to engine.
 type Provider struct {
-	Name     string          `json:"name"              yaml:"name"`
 	Kind     string          `json:"kind"              yaml:"kind"`
 	Endpoint string          `json:"endpoint"          yaml:"endpoint"`
 	BaseURL  string          `json:"base_url,omitempty" yaml:"base_url,omitempty"`
 	Config   map[string]any  `json:"config,omitempty"  yaml:"config,omitempty"`
 	Secrets  secrets.Secrets `json:"secrets,omitempty" yaml:"secrets,omitempty"`
-	Filter   Filter          `json:"filter,omitempty"  yaml:"filter,omitempty"`
+	Include  FilterRules     `json:"include,omitempty" yaml:"include,omitempty"`
+	Exclude  FilterRules     `json:"exclude,omitempty" yaml:"exclude,omitempty"`
 
 	engine Engine
 }
@@ -80,13 +80,12 @@ func hostingProviderEngine(kind string) (Engine, bool) {
 	return engine, ok
 }
 
-// DisplayName returns the display name. It falls back to Kind when Name is unset.
+// DisplayName returns the fallback provider display name for direct provider
+// calls. Deployments selected from a provider map should pass the map key to
+// DeployNamed instead.
 func (p *Provider) DisplayName() string {
 	if p == nil {
 		return ""
-	}
-	if p.Name != "" {
-		return p.Name
 	}
 	return p.Kind
 }
@@ -131,9 +130,6 @@ func (p *Provider) Validate() error {
 
 // ValidateRoot runs baseline checks shared by every Provider.
 func (p *Provider) ValidateRoot() error {
-	if p.Name == "" {
-		return ErrMissingName
-	}
 	if p.Kind == "" {
 		return ErrMissingKind
 	}
@@ -143,7 +139,8 @@ func (p *Provider) ValidateRoot() error {
 	if err := p.attachEngine(); err != nil {
 		return err
 	}
-	if _, err := p.Filter.compile(); err != nil {
+	filter := p.filter()
+	if _, err := filter.compile(); err != nil {
 		return fmt.Errorf("provider %q filter: %w", p.DisplayName(), err)
 	}
 	return nil
@@ -167,7 +164,8 @@ func (p *Provider) DeploymentFiles(root string) ([]*File, error) {
 }
 
 func (p *Provider) deploymentFiles(ctx context.Context, files []*File) ([]*File, error) {
-	filter, err := p.Filter.compile()
+	providerFilter := p.filter()
+	filter, err := providerFilter.compile()
 	if err != nil {
 		return nil, err
 	}
@@ -191,37 +189,60 @@ func (p *Provider) deploymentFiles(ctx context.Context, files []*File) ([]*File,
 // Deploy discovers files, applies the provider filter, and delegates the
 // selected files to the provider engine.
 func (p *Provider) Deploy(ctx context.Context, root string, runtime *session.Session) (err error) {
+	return p.DeployNamed(ctx, "", root, runtime)
+}
+
+// DeployNamed discovers files, applies the provider filter, and delegates the
+// selected files to the provider engine using name as the provider display name.
+func (p *Provider) DeployNamed(ctx context.Context, name string, root string, runtime *session.Session) (err error) {
+	ctx = WithProviderName(ctx, p.providerName(name))
 	if !DeploymentActive(ctx) {
 		var finish func(error)
 		ctx, finish = BeginDeployment(ctx, "")
 		defer func() { finish(err) }()
 	}
 
-	LogProvider(ctx, p, "hosting", p.DisplayName(), "init")
+	providerName := ProviderName(ctx, p)
+	LogProvider(ctx, p, "hosting", providerName, "init")
 
 	if err := p.Validate(); err != nil {
-		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
+		LogProvider(ctx, p, "hosting", providerName, "failed")
 		return err
 	}
 	p.logSecrets(ctx, runtime)
 
 	files, err := walk(root)
 	if err != nil {
-		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
+		LogProvider(ctx, p, "hosting", providerName, "failed")
 		return err
 	}
 	files, err = p.deploymentFiles(ctx, files)
 	if err != nil {
-		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
+		LogProvider(ctx, p, "hosting", providerName, "failed")
 		return err
 	}
-	LogProvider(ctx, p, "hosting", p.DisplayName(), "ready")
+	LogProvider(ctx, p, "hosting", providerName, "ready")
 
 	if err := p.engine.Deploy(ctx, runtime, p, root, files); err != nil {
-		LogProvider(ctx, p, "hosting", p.DisplayName(), "failed")
+		LogProvider(ctx, p, "hosting", providerName, "failed")
 		return err
 	}
 	return nil
+}
+
+func (p *Provider) filter() Filter {
+	if p == nil {
+		return Filter{}
+	}
+	return Filter{Include: p.Include, Exclude: p.Exclude}
+}
+
+func (p *Provider) providerName(name string) string {
+	name = strings.TrimSpace(name)
+	if name != "" {
+		return name
+	}
+	return p.DisplayName()
 }
 
 func (p *Provider) logSecrets(ctx context.Context, runtime *session.Session) {

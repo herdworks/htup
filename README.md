@@ -9,12 +9,12 @@ Updating your website should be easy because the provider optimizes updates to r
 
 ## Architecture
 
-Deployment is modeled as an `Environment` (e.g. `development`, `staging`, `production`) that owns one-or-more `Provider`s.
+Deployment is modeled as a `HostingProviders` map plus `HostingEnvironment` provider-name selections.
 Callers pass a deployment root directory, and HyperProviders handles file discovery, filtering, and provider fan-out internally.
 Every file's deployment path is always relative to that source directory's root.
 For example, deploying `relative/path/to/a/build/` writes `relative/path/to/a/build/index.html` as the object key `index.html` for an S3 provider, and as the path `index.html` in the root of the git repo for a Git provider.
 
-A provider's `Filter` (`include` / `exclude` on path regexes and mimetype regexes) narrows what it accepts.
+A provider's root `include` / `exclude` rules narrow what it accepts.
 HyperProviders does **not** dedupe across providers — the same file can legitimately be deployed by multiple providers (e.g. CDN + backup).
 The top-level `.provider/` directory is reserved for provider-managed workspace state and is never deployed.
 Symlinks are not supported in deployment roots.
@@ -42,44 +42,44 @@ import (
     "github.com/herdworks/hyperproviders-go/providers/s3"
 )
 
-provider := &hp.HostingProvider{
-    Name:     "assets",
-    Kind:     s3.Kind,
-    Endpoint: "https://example.r2.cloudflarestorage.com",
-    BaseURL:  "https://assets.example.com",
-    Secrets: hp.Secrets{
-        {Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
-        {Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
-    },
-    Config: map[string]any{
-        "bucket": "my-bucket",
-        "region": "us-east-1",
-        "addressing_style": "path",
+providers := hp.HostingProviders{
+    "assets": {
+        Kind:     s3.Kind,
+        Endpoint: "https://example.r2.cloudflarestorage.com",
+        BaseURL:  "https://assets.example.com",
+        Secrets: hp.Secrets{
+            {Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
+            {Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
+        },
+        Config: map[string]any{
+            "bucket": "my-bucket",
+            "region": "us-east-1",
+            "addressing_style": "path",
+        },
     },
 }
+environment := hp.HostingEnvironment{"assets"}
 session := &hp.Session{
     Secrets: hp.SecretValues{
         "AWS_ACCESS_KEY_ID":     hp.StringSecret(accessKey),
         "AWS_SECRET_ACCESS_KEY": hp.StringSecret(secretAccessKey),
     },
 }
-if err := provider.Validate(); err != nil { /* ... */ }
-if err := provider.Deploy(ctx, "./build", session); err != nil { /* ... */ }
+if err := environment.Deploy(ctx, providers, "./build", session); err != nil { /* ... */ }
 ```
 
 Deploys write progress logs to standard output with `[deployment]` and
-`[provider/<kind>/<name>]` prefixes. `Environment.Deploy` writes environment
-start and completed lines. Provider setup logs hosting init/ready, configured
+`[provider/<kind>/<name>]` prefixes. Provider setup logs hosting init/ready, configured
 secret names as found/not_found/empty/error without logging values, and source
 files as included/excluded after filtering. Provider engines log destination
 resources; resource URLs use the provider's `BaseURL` when set and fall back to
 root-relative paths when `BaseURL` is empty.
 
-Callers that manage multiple deployment environments should usually model them
-as `map[string]*hyperproviders.Environment` (or `map[string]*hp.Environment`
-when importing with the alias above). The map key is the environment identifier
-used for selection, and the pointer value avoids copying provider slices while
-allowing config loaders to fill an empty `Environment.Name` from the key.
+Callers that manage multiple deployment environments should usually model
+providers as `hyperproviders.HostingProviders` and environments as
+`map[string]*hyperproviders.HostingEnvironment`. The provider map key is the provider
+identifier used for selection, and each environment is an ordered list of those
+provider names.
 
 When `Session.SecretProviders` is omitted, HyperProviders resolves secrets only
 from `Session.Secrets`. Add `providers/env.New()` explicitly when environment
@@ -91,9 +91,9 @@ deploying so its `init` registration makes that `kind` available.
 ## `htdt` — HyperTexting Deploy Tool
 
 `htdt` is a standalone CLI for deploying any directory using hyperproviders-go.
-It reads a JSON or YAML config file with an `environments` map and deploys the chosen environment's providers.
+It reads a JSON or YAML config file with a `providers` map and an `environments` map, then deploys the chosen environment's provider names.
 The CLI session resolves secrets from OS environment variables.
-Generic provider fields (`name`, `kind`, `endpoint`, `base_url`, `filter`, `secrets`) live at the provider root.
+Generic provider fields (`kind`, `endpoint`, `base_url`, `include`, `exclude`, `secrets`) live at the provider root.
 Provider-specific settings live under `config`.
 For S3 providers, `workers` controls concurrent object uploads and must be at least `1` when set.
 For Git providers, `publish_dir` controls where files are written in the repository and defaults to `.`.
@@ -111,54 +111,47 @@ Example `htdt.json`:
 ```json
 {
   "version": 1,
-  "environments": {
-    "production": {
-      "providers": [
-        {
-          "kind": "s3",
-          "name": "production-assets",
-          "endpoint": "https://<accountid>.r2.cloudflarestorage.com",
-          "base_url": "https://assets.example.com",
-          "config": {
-            "bucket": "my-site-assets",
-            "region": "auto",
-            "addressing_style": "path",
-            "cache_control": "public, max-age=3600",
-            "conditional_mode": "etag",
-            "workers": 10
-          },
-          "filter": {
-            "include": {
-              "types": ["^image/", "^video/", "^audio/"]
-            }
-          },
-          "secrets": [
-            { "name": "access_key_id", "key": "R2_ACCESS_KEY_ID" },
-            { "name": "secret_access_key", "key": "R2_SECRET_ACCESS_KEY" }
-          ]
-        },
-        {
-          "kind": "git",
-          "name": "production-pages",
-          "endpoint": "git@github.com:acme/site.git",
-          "base_url": "https://example.com",
-          "config": {
-            "branch": "gh-pages",
-            "publish_dir": ".",
-            "author_name": "hyperproviders bot",
-            "author_email": "bot@example.com"
-          },
-          "filter": {
-            "exclude": {
-              "types": ["^image/", "^video/", "^audio/"]
-            }
-          },
-          "secrets": [
-            { "name": "ssh_private_key", "key": "DEPLOY_SSH_KEY" }
-          ]
-        }
+  "providers": {
+    "production-assets": {
+      "kind": "s3",
+      "endpoint": "https://<accountid>.r2.cloudflarestorage.com",
+      "base_url": "https://assets.example.com",
+      "config": {
+        "bucket": "my-site-assets",
+        "region": "auto",
+        "addressing_style": "path",
+        "cache_control": "public, max-age=3600",
+        "conditional_mode": "etag",
+        "workers": 10
+      },
+      "include": {
+        "types": ["^image/", "^video/", "^audio/"]
+      },
+      "secrets": [
+        { "name": "access_key_id", "key": "R2_ACCESS_KEY_ID" },
+        { "name": "secret_access_key", "key": "R2_SECRET_ACCESS_KEY" }
+      ]
+    },
+    "production-pages": {
+      "kind": "git",
+      "endpoint": "git@github.com:acme/site.git",
+      "base_url": "https://example.com",
+      "config": {
+        "branch": "gh-pages",
+        "publish_dir": ".",
+        "author_name": "hyperproviders bot",
+        "author_email": "bot@example.com"
+      },
+      "exclude": {
+        "types": ["^image/", "^video/", "^audio/"]
+      },
+      "secrets": [
+        { "name": "ssh_private_key", "key": "DEPLOY_SSH_KEY" }
       ]
     }
+  },
+  "environments": {
+    "production": ["production-assets", "production-pages"]
   }
 }
 ```

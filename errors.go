@@ -7,7 +7,6 @@ import (
 
 var (
 	ErrMissingKind     = hosting.ErrMissingKind
-	ErrMissingName     = hosting.ErrMissingName
 	ErrMissingEndpoint = hosting.ErrMissingEndpoint
 	ErrUnknownKind     = hosting.ErrUnknownKind
 

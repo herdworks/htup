@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added `HostingProviders` as the primary deployment surface, with provider names supplied by map keys and `HostingEnvironment` reduced to an ordered provider-name selection.
+* Changed provider filters from nested `filter.include` / `filter.exclude` fields to root-level `include` / `exclude` fields; exclude rules continue to win when both include and exclude match.
+* Removed `HostingProvider.Name`; callers name providers with `HostingProviders` map keys.
+
 ## v0.18.2 (2026-04-28)
 
 * Fixed Git deploys to create a configured branch that is missing from a non-empty remote repository.
@@ -19,9 +23,9 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 Complete redesign of the `hyperproviders` package.
 Every exported type changes; the `hypertemplates-go` dependency is removed entirely.
 
-* Added `Environment` type with `Name` and concrete `HostingProvider` values, modeling named deployment targets (e.g. `development`, `staging`, `production`).
+* Added `HostingProviders` and `HostingEnvironment` types for map-named providers and provider-name selections.
 * Added `HostingProvider` concrete type and `HostingProviderEngine` interface, separating shared provider configuration from provider-specific deployment behavior.
-* Added `ProviderFilter` with include/exclude rules over path regexes and mimetype regexes — routes files to the right provider in multi-provider environments.
+* Added include/exclude rules over path regexes and mimetype regexes — routes files to the right provider in multi-provider environments.
 * Added `SecretProvider` interface, `SecretProviderBase` helper, and `providers/env.Provider` that reads from `os.Getenv`.
 * Added `Session`, `SecretValue`, and `providers/runtime.Provider` for deploy-time secret injection.
 * Added native `File` type with lazy size, mimetype, SHA-256, and S3-compatible MD5 ETag helpers.
@@ -34,7 +38,7 @@ Every exported type changes; the `hypertemplates-go` dependency is removed entir
 * Added `providers/git` `publish_dir` config to write deployed files under a repository subdirectory, defaulting to the repository root.
 * Added `cmd/htdt`, the HyperTexting Deploy Tool — a standalone CLI for deploying arbitrary directories to S3 or Git via a JSON or YAML environments config.
 * Changed minimum Go toolchain is `1.25.0` (driven by AWS SDK v2 transitive requirements).
-* Changed `HostingProvider.Deploy` and `Environment.Deploy` accept a deployment root directory; hyperproviders owns file discovery, filtering, and provider fan-out internally.
+* Changed `HostingProvider.Deploy` and `HostingEnvironment.Deploy` accept a deployment root directory; hyperproviders owns file discovery, filtering, and provider fan-out internally.
 * Changed Provider-specific serialized settings now live under `HostingProvider.Config`; shared provider fields remain at the provider object root.
 * Changed S3 upload worker configuration moved under provider-specific `config.workers` instead of a root-level provider concurrency setting.
 * Changed `HostingProvider` now validates provider-specific settings through its registered `HostingProviderEngine`.
@@ -42,7 +46,7 @@ Every exported type changes; the `hypertemplates-go` dependency is removed entir
 * Changed `Deploy` now takes `Session` so callers can choose secret provider precedence per deployment.
 * Changed `Secrets.Get` returns `(*Secret, error)` instead of `*Secret` so missing-secret errors are explicit.
 * Changed secret declarations no longer include `provider` or `unsafe_value`; durable config names the required secret and lookup key only.
-* Removed `HyperProvider`, `HyperProviderConfig`, `HyperProviderEngine`, and `HostingProviders` types.
+* Removed `HyperProvider`, `HyperProviderConfig`, and `HyperProviderEngine` types.
 * Removed the `hypertemplates-go` dependency (HyperFile semantics are not needed inside a deployment engine).
 * Removed the `aws-sdk-go-v2/feature/s3/manager` dependency (single-part PUTs only; keeps S3 ETag == MD5).
 

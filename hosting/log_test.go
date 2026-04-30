@@ -75,8 +75,9 @@ func TestProviderLogsQuoteValues(t *testing.T) {
 	defer restore()
 
 	file := mkFile(t, t.TempDir(), "blog/index.html")
-	provider := &Provider{Name: "assets", Kind: "s3"}
+	provider := &Provider{Kind: "s3"}
 	ctx, finish := BeginDeployment(context.Background(), "production")
+	ctx = WithProviderName(ctx, "assets")
 	LogProvider(ctx, provider, "hosting", "assets", "ready")
 	LogSecret(ctx, provider, "access_key_id", "found")
 	LogFile(ctx, provider, file, "included")

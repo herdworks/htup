@@ -44,7 +44,6 @@ func newProvider(t *testing.T, remote string) *hosting.Provider {
 
 	return &hosting.Provider{
 		Kind:     Kind,
-		Name:     "test",
 		Endpoint: remote,
 		Config: map[string]any{
 			"branch":       "main",
@@ -203,17 +202,15 @@ func TestGitProvider_SerializesSameRemoteBranchDeploys(t *testing.T) {
 	})
 
 	pages := newProvider(t, remote)
-	pages.Name = "pages"
 	pages.Config["publish_dir"] = "pages"
 	assets := newProvider(t, remote)
-	assets.Name = "assets"
 	assets.Config["publish_dir"] = "assets"
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for _, deploy := range []func() error{
-		func() error { return pages.Deploy(context.Background(), pagesSource, nil) },
-		func() error { return assets.Deploy(context.Background(), assetsSource, nil) },
+		func() error { return pages.DeployNamed(context.Background(), "pages", pagesSource, nil) },
+		func() error { return assets.DeployNamed(context.Background(), "assets", assetsSource, nil) },
 	} {
 		wg.Add(1)
 		go func(deploy func() error) {
@@ -380,7 +377,6 @@ func TestGitProvider_TagEnabled(t *testing.T) {
 func TestGitProvider_UnmarshalHostingProvider(t *testing.T) {
 	raw := []byte(`{
 		"kind": "git",
-		"name": "p",
 		"endpoint": "https://x.test/r",
 		"config": {
 			"branch": "main"
@@ -390,8 +386,8 @@ func TestGitProvider_UnmarshalHostingProvider(t *testing.T) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if p.Kind != "git" || p.DisplayName() != "p" {
-		t.Errorf("kind/name = %s/%s, want git/p", p.Kind, p.DisplayName())
+	if p.Kind != "git" || p.DisplayName() != "git" {
+		t.Errorf("kind/name = %s/%s, want git/git", p.Kind, p.DisplayName())
 	}
 	if err := p.Validate(); err != nil {
 		t.Errorf("Validate: %v", err)

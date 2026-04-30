@@ -4,7 +4,6 @@ import "errors"
 
 var (
 	ErrMissingKind     = errors.New("provider kind is empty")
-	ErrMissingName     = errors.New("provider name is empty")
 	ErrMissingEndpoint = errors.New("provider endpoint is empty")
 	ErrUnknownKind     = errors.New("unknown provider kind")
 

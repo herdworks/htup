@@ -35,17 +35,21 @@ func runDeploy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range env.Providers {
+	for _, name := range *env {
+		p := cfg.Providers[name]
+		if p == nil {
+			return fmt.Errorf("validate provider %q: provider not found", name)
+		}
 		if err := p.Validate(); err != nil {
-			return fmt.Errorf("validate provider %q: %w", p.DisplayName(), err)
+			return fmt.Errorf("validate provider %q: %w", name, err)
 		}
 	}
 
 	if *dryRun {
-		return printDryRun(os.Stdout, env, *source)
+		return printDryRun(os.Stdout, cfg.Providers, env, *source)
 	}
 
-	return env.Deploy(ctx, *source, Session())
+	return env.Deploy(ctx, cfg.Providers, *source, Session())
 }
 
 // runValidate implements `htdt validate`. Parses the config and runs
@@ -64,12 +68,20 @@ func runValidate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, env := range sortedEnvs(cfg) {
-		for _, p := range env.Providers {
-			if err := p.Validate(); err != nil {
-				return fmt.Errorf("environment %q provider %q: %w", env.Name, p.DisplayName(), err)
+	for _, envName := range sortedEnvNames(cfg) {
+		env := cfg.Environments[envName]
+		if env == nil {
+			return fmt.Errorf("environment %q is empty", envName)
+		}
+		for _, providerName := range *env {
+			p := cfg.Providers[providerName]
+			if p == nil {
+				return fmt.Errorf("environment %q provider %q: provider not found", envName, providerName)
 			}
-			fmt.Printf("ok  %s / %s (%s)\n", env.Name, p.DisplayName(), p.Kind)
+			if err := p.Validate(); err != nil {
+				return fmt.Errorf("environment %q provider %q: %w", envName, providerName, err)
+			}
+			fmt.Printf("ok  %s / %s (%s)\n", envName, providerName, p.Kind)
 		}
 	}
 	return nil
@@ -90,36 +102,43 @@ func runList(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, env := range sortedEnvs(cfg) {
-		fmt.Println(env.Name)
-		for _, p := range env.Providers {
-			fmt.Printf("  - %s (%s)\n", p.DisplayName(), p.Kind)
+	for _, envName := range sortedEnvNames(cfg) {
+		env := cfg.Environments[envName]
+		fmt.Println(envName)
+		if env == nil {
+			fmt.Println("  - (empty)")
+			continue
+		}
+		for _, providerName := range *env {
+			p := cfg.Providers[providerName]
+			if p == nil {
+				fmt.Printf("  - %s (missing)\n", providerName)
+				continue
+			}
+			fmt.Printf("  - %s (%s)\n", providerName, p.Kind)
 		}
 	}
 	return nil
 }
 
-func sortedEnvs(cfg *Config) []*hp.Environment {
+func sortedEnvNames(cfg *Config) []string {
 	names := make([]string, 0, len(cfg.Environments))
 	for name := range cfg.Environments {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	envs := make([]*hp.Environment, 0, len(names))
-	for _, name := range names {
-		envs = append(envs, cfg.Environments[name])
-	}
-	return envs
+	return names
 }
 
-func printDryRun(w *os.File, env *hp.Environment, root string) error {
-	plan, err := env.Plan(root)
+func printDryRun(w *os.File, providers hp.HostingProviders, env *hp.HostingEnvironment, root string) error {
+	plan, err := env.Plan(providers, root)
 	if err != nil {
 		return err
 	}
-	for _, p := range env.Providers {
-		fmt.Fprintf(w, "# provider %s (%s)\n", p.DisplayName(), p.Kind)
-		for _, path := range plan[p.DisplayName()] {
+	for _, providerName := range *env {
+		p := providers[providerName]
+		fmt.Fprintf(w, "# provider %s (%s)\n", providerName, p.Kind)
+		for _, path := range plan[providerName] {
 			fmt.Fprintln(w, path)
 		}
 	}

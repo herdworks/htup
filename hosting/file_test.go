@@ -240,10 +240,9 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 	}
 
 	provider := &Provider{
-		Name:     "files",
 		Kind:     "file-test",
 		Endpoint: "https://example.com",
-		Filter:   Filter{Exclude: FilterRules{Paths: []string{`\.git/`}}},
+		Exclude:  FilterRules{Paths: []string{`\.git/`}},
 	}
 	files, err := provider.DeploymentFiles(mustAbs(t, root))
 	if err != nil {
@@ -256,10 +255,9 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 	}
 
 	provider = &Provider{
-		Name:     "files",
 		Kind:     "file-test",
 		Endpoint: "https://example.com",
-		Filter:   Filter{Include: FilterRules{Paths: []string{`\.html$`}}},
+		Include:  FilterRules{Paths: []string{`\.html$`}},
 	}
 	only, err := provider.DeploymentFiles(root)
 	if err != nil {
@@ -270,6 +268,20 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 	}
 	if only[0].RelPath() != "site/a.html" {
 		t.Errorf("include filter returned %s, want site/a.html", only[0].RelPath())
+	}
+
+	provider = &Provider{
+		Kind:     "file-test",
+		Endpoint: "https://example.com",
+		Include:  FilterRules{Paths: []string{`\.html$`}},
+		Exclude:  FilterRules{Paths: []string{`a\.html$`}},
+	}
+	only, err = provider.DeploymentFiles(root)
+	if err != nil {
+		t.Fatalf("DeploymentFiles: %v", err)
+	}
+	if len(only) != 0 {
+		t.Fatalf("exclude should win over include; got %d files", len(only))
 	}
 }
 

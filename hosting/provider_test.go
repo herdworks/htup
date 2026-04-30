@@ -136,27 +136,21 @@ func TestFilter_InvalidRegex(t *testing.T) {
 	}
 }
 
-func TestProvider_NameFallbackAndValidate(t *testing.T) {
+func TestProvider_DisplayNameAndValidate(t *testing.T) {
 	RegisterEngine("test", &fakeEngine{})
 
 	p := &Provider{
-		Name:     "myprov",
 		Kind:     "test",
 		Endpoint: "https://example.com",
 		Config:   map[string]any{},
 	}
-	if p.DisplayName() != "myprov" {
-		t.Errorf("DisplayName = %q, want myprov", p.DisplayName())
-	}
-
-	fallback := &Provider{Kind: "test"}
-	if fallback.DisplayName() != "test" {
-		t.Errorf("DisplayName fallback = %q, want test", fallback.DisplayName())
+	if p.DisplayName() != "test" {
+		t.Errorf("DisplayName = %q, want test", p.DisplayName())
 	}
 
 	empty := &Provider{}
-	if err := empty.ValidateRoot(); err == nil {
-		t.Error("ValidateRoot should error when provider name is empty")
+	if !errors.Is(empty.ValidateRoot(), ErrMissingKind) {
+		t.Error("ValidateRoot should error when provider kind is empty")
 	}
 	if err := p.ValidateRoot(); err != nil {
 		t.Errorf("ValidateRoot: %v", err)
@@ -170,7 +164,6 @@ func TestProvider_ValidateRoot(t *testing.T) {
 	RegisterEngine("root-test", &fakeEngine{})
 
 	valid := &Provider{
-		Name:     "example",
 		Kind:     "root-test",
 		Endpoint: "https://example.com",
 		Config:   map[string]any{},
@@ -183,17 +176,16 @@ func TestProvider_ValidateRoot(t *testing.T) {
 		name string
 		p    *Provider
 	}{
-		{name: "missing name", p: &Provider{Kind: "root-test", Endpoint: "https://example.com", Config: map[string]any{}}},
-		{name: "missing kind", p: &Provider{Name: "example", Endpoint: "https://example.com", Config: map[string]any{}}},
-		{name: "missing endpoint", p: &Provider{Name: "example", Kind: "root-test", Config: map[string]any{}}},
-		{name: "unknown kind", p: &Provider{Name: "example", Kind: "unknown", Endpoint: "https://example.com", Config: map[string]any{}}},
+		{name: "missing kind", p: &Provider{Endpoint: "https://example.com", Config: map[string]any{}}},
+		{name: "missing endpoint", p: &Provider{Kind: "root-test", Config: map[string]any{}}},
+		{name: "unknown kind", p: &Provider{Kind: "unknown", Endpoint: "https://example.com", Config: map[string]any{}}},
 	} {
 		if err := tc.p.ValidateRoot(); err == nil {
 			t.Errorf("%s: expected error", tc.name)
 		}
 	}
 
-	noConfig := &Provider{Name: "example", Kind: "root-test", Endpoint: "https://example.com"}
+	noConfig := &Provider{Kind: "root-test", Endpoint: "https://example.com"}
 	if err := noConfig.ValidateRoot(); err != nil {
 		t.Errorf("ValidateRoot without config: %v", err)
 	}
@@ -204,7 +196,6 @@ func TestProvider_DeploymentFilesValidatesRoot(t *testing.T) {
 	mkFile(t, root, "index.html")
 
 	provider := &Provider{
-		Name:     "unknown",
 		Kind:     "unknown-deployment-files",
 		Endpoint: "https://example.com",
 	}
@@ -217,14 +208,10 @@ func TestProvider_DeploymentFilesValidatesRoot(t *testing.T) {
 	}
 }
 
-func TestProvider_NameFallback(t *testing.T) {
+func TestProvider_DisplayName(t *testing.T) {
 	p := &Provider{Kind: "test"}
 	if p.DisplayName() != "test" {
-		t.Errorf("DisplayName fallback = %q, want test", p.DisplayName())
-	}
-	p.Name = "myprov"
-	if p.DisplayName() != "myprov" {
-		t.Errorf("DisplayName = %q, want myprov", p.DisplayName())
+		t.Errorf("DisplayName = %q, want test", p.DisplayName())
 	}
 }
 
@@ -234,7 +221,6 @@ func TestProvider_DecodeConfig(t *testing.T) {
 	var p Provider
 	raw := []byte(`{
 		"kind": "decode-test",
-		"name": "decode",
 		"endpoint": "https://example.com",
 		"config": {
 			"bucket": "my-bucket",
@@ -322,10 +308,9 @@ func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 	mkFile(t, root, "style.css")
 
 	provider := &Provider{
-		Name:     "assets",
 		Kind:     "log-test",
 		Endpoint: "https://example.com",
-		Filter:   Filter{Include: FilterRules{Paths: []string{`\.html$`}}},
+		Include:  FilterRules{Paths: []string{`\.html$`}},
 		Secrets: secrets.Secrets{
 			{Name: "token", Key: "TOKEN"},
 			{Name: "missing"},
@@ -337,7 +322,7 @@ func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 		},
 	}
 
-	if err := provider.Deploy(context.Background(), root, runtime); err != nil {
+	if err := provider.DeployNamed(context.Background(), "assets", root, runtime); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -367,11 +352,10 @@ func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
 	mkFile(t, root, "index.html")
 
 	provider := &Provider{
-		Name:     "assets",
 		Kind:     "fail-test",
 		Endpoint: "https://example.com",
 	}
-	err := provider.Deploy(context.Background(), root, nil)
+	err := provider.DeployNamed(context.Background(), "assets", root, nil)
 	if err == nil {
 		t.Fatal("Deploy() error = nil, want error")
 	}

@@ -187,7 +187,7 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 	lock.Lock()
 	defer lock.Unlock()
 
-	workdir, err := cfg.workdir(root, provider.DisplayName())
+	workdir, err := cfg.workdir(root, hosting.ProviderName(ctx, provider))
 	if err != nil {
 		return fmt.Errorf("git: workdir: %w", err)
 	}

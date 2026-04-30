@@ -9,18 +9,16 @@ import (
 func TestLoadConfig_JSON(t *testing.T) {
 	path := writeConfig(t, "config.json", `{
 		"version": 1,
-		"environments": {
-			"production": {
-				"providers": [
-					{
-						"kind": "s3",
-						"name": "assets",
-						"endpoint": "https://example.com",
-						"base_url": "https://assets.example.com",
-						"config": { "bucket": "assets" }
-					}
-				]
+		"providers": {
+			"assets": {
+				"kind": "s3",
+				"endpoint": "https://example.com",
+				"base_url": "https://assets.example.com",
+				"config": { "bucket": "assets" }
 			}
+		},
+		"environments": {
+			"production": ["assets"]
 		}
 	}`)
 
@@ -34,15 +32,16 @@ func TestLoadConfig_JSON(t *testing.T) {
 func TestLoadConfig_YAML(t *testing.T) {
 	path := writeConfig(t, "config.yaml", `
 version: 1
+providers:
+  assets:
+    kind: s3
+    endpoint: https://example.com
+    base_url: https://assets.example.com
+    config:
+      bucket: assets
 environments:
   production:
-    providers:
-      - kind: s3
-        name: assets
-        endpoint: https://example.com
-        base_url: https://assets.example.com
-        config:
-          bucket: assets
+    - assets
 `)
 
 	cfg, err := LoadConfig(path)
@@ -55,15 +54,16 @@ environments:
 func TestLoadConfig_YML(t *testing.T) {
 	path := writeConfig(t, "config.yml", `
 version: 1
+providers:
+  assets:
+    kind: s3
+    endpoint: https://example.com
+    base_url: https://assets.example.com
+    config:
+      bucket: assets
 environments:
   production:
-    providers:
-      - kind: s3
-        name: assets
-        endpoint: https://example.com
-        base_url: https://assets.example.com
-        config:
-          bucket: assets
+    - assets
 `)
 
 	cfg, err := LoadConfig(path)
@@ -88,18 +88,15 @@ func assertLoadedConfig(t *testing.T, cfg *Config) {
 	if err != nil {
 		t.Fatalf("Environment: %v", err)
 	}
-	if env.Name != "production" {
-		t.Errorf("env.Name = %q, want production", env.Name)
+	if len(*env) != 1 || (*env)[0] != "assets" {
+		t.Fatalf("environment = %#v, want [assets]", *env)
 	}
-	if len(env.Providers) != 1 {
-		t.Fatalf("providers = %d, want 1", len(env.Providers))
+	provider := cfg.Providers["assets"]
+	if provider == nil {
+		t.Fatal("provider assets missing")
 	}
-	provider := env.Providers[0]
 	if provider.Kind != "s3" {
 		t.Errorf("provider.Kind = %q, want s3", provider.Kind)
-	}
-	if provider.DisplayName() != "assets" {
-		t.Errorf("provider.DisplayName = %q, want assets", provider.DisplayName())
 	}
 	if provider.BaseURL != "https://assets.example.com" {
 		t.Errorf("provider.BaseURL = %q, want assets base URL", provider.BaseURL)

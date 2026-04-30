@@ -16,8 +16,9 @@ import (
 
 // Config is the top-level htdt configuration.
 type Config struct {
-	Version      int                        `json:"version"      yaml:"version"`
-	Environments map[string]*hp.Environment `json:"environments" yaml:"environments"`
+	Version      int                               `json:"version"      yaml:"version"`
+	Providers    hp.HostingProviders               `json:"providers"    yaml:"providers"`
+	Environments map[string]*hp.HostingEnvironment `json:"environments" yaml:"environments"`
 }
 
 // LoadConfig reads and parses a JSON or YAML config file.
@@ -37,22 +38,23 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("parse config %s: %w", path, err)
 		}
 	}
-	if cfg.Environments == nil {
-		return nil, fmt.Errorf("config %s: environments is empty", path)
+	if len(cfg.Providers) == 0 {
+		return nil, fmt.Errorf("config %s: providers is empty", path)
 	}
-	for name, env := range cfg.Environments {
-		if env.Name == "" {
-			env.Name = name
-		}
+	if len(cfg.Environments) == 0 {
+		return nil, fmt.Errorf("config %s: environments is empty", path)
 	}
 	return &cfg, nil
 }
 
 // Environment returns the environment with the given name.
-func (c *Config) Environment(name string) (*hp.Environment, error) {
+func (c *Config) Environment(name string) (*hp.HostingEnvironment, error) {
 	env, ok := c.Environments[name]
 	if !ok {
 		return nil, fmt.Errorf("environment %q not found in config", name)
+	}
+	if env == nil {
+		return nil, fmt.Errorf("environment %q is empty in config", name)
 	}
 	return env, nil
 }
