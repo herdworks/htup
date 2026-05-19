@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.19.1 (2026-05-19)
+
 * Changed secret declarations to require `key`; `Secret.LookupKey()` now returns only `key` and no longer falls back to `name`.
 
 ## v0.19.0 (2026-04-30)
