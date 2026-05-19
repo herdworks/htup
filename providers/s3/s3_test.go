@@ -69,8 +69,8 @@ func TestValidate_UsesBucketFromEndpointPath(t *testing.T) {
 		Endpoint: "https://example.com/path-bucket",
 		Config:   map[string]any{},
 		Secrets: secrets.Secrets{
-			{Name: "access_key_id"},
-			{Name: "secret_access_key"},
+			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
+			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
 	}
 
@@ -107,8 +107,8 @@ func TestValidate_UsesBucketFromConfig(t *testing.T) {
 			"region": "us-east-1",
 		},
 		Secrets: secrets.Secrets{
-			{Name: "access_key_id"},
-			{Name: "secret_access_key"},
+			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
+			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
 	}
 
@@ -134,8 +134,8 @@ func TestValidate_AllowsVirtualAddressingWithoutBucket(t *testing.T) {
 			"region":           "us-east-1",
 		},
 		Secrets: secrets.Secrets{
-			{Name: "access_key_id"},
-			{Name: "secret_access_key"},
+			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
+			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
 	}
 

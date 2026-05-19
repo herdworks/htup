@@ -81,8 +81,10 @@ providers as `hyperproviders.HostingProviders` and environments as
 identifier used for selection, and each environment is an ordered list of those
 provider names.
 
-When `Session.SecretProviders` is omitted, HyperProviders resolves secrets only
-from `Session.Secrets`. Add `providers/env.New()` explicitly when environment
+Secret declarations require both `name` and `key`: `name` is the provider-defined
+credential role, and `key` is the caller-defined runtime lookup key. When
+`Session.SecretProviders` is omitted, HyperProviders resolves secrets only from
+`Session.Secrets`. Add `providers/env.New()` explicitly when environment
 variable lookup should be available. Add `providers/runtime.New()` explicitly
 when runtime secrets should participate in a custom precedence list.
 Import each provider engine package you need before validating, planning, or

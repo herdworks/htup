@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
 	ErrNotFound        = errors.New("secret not found")
 	ErrEmpty           = errors.New("secret resolved to empty value")
 	ErrResolveRequired = errors.New("secret provider Resolve is required")
+	ErrMissingName     = errors.New("secret name is required")
+	ErrMissingKey      = errors.New("secret key is required")
 )
 
 // Value is an opaque secret value. Use String or Bytes at the boundary where
@@ -79,19 +82,30 @@ func (p *ProviderBase) Resolve(ctx context.Context, values Values, key string) (
 	return nil, fmt.Errorf("%w: %s", ErrResolveRequired, p.Name())
 }
 
-// Secret is a single credential declaration. It names the credential needed by
-// a hosting provider and the runtime key used to resolve it.
+// Secret is a single credential declaration. Name is the provider-defined
+// credential name, and Key is the required runtime lookup key used to resolve it.
 type Secret struct {
-	Name string `json:"name"          yaml:"name"`
-	Key  string `json:"key,omitempty" yaml:"key,omitempty"`
+	Name string `json:"name" yaml:"name"`
+	Key  string `json:"key"  yaml:"key"`
 }
 
-// LookupKey returns Key when set, otherwise Name.
+// LookupKey returns the runtime key used to resolve the secret.
 func (s *Secret) LookupKey() string {
-	if s.Key != "" {
-		return s.Key
+	if s == nil {
+		return ""
 	}
-	return s.Name
+	return s.Key
+}
+
+// Validate confirms the secret declaration is complete.
+func (s *Secret) Validate() error {
+	if s == nil || strings.TrimSpace(s.Name) == "" {
+		return ErrMissingName
+	}
+	if strings.TrimSpace(s.Key) == "" {
+		return ErrMissingKey
+	}
+	return nil
 }
 
 // Secrets is a collection of Secret with lookup and validation helpers.
@@ -107,8 +121,22 @@ func (s Secrets) Get(name string) (*Secret, error) {
 	return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
 
-// Require confirms every required secret declaration exists.
+// Validate confirms every secret declaration has a provider name and runtime
+// lookup key.
+func (s Secrets) Validate() error {
+	for i := range s {
+		if err := s[i].Validate(); err != nil {
+			return fmt.Errorf("secret[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// Require confirms every required secret declaration exists and is valid.
 func (s Secrets) Require(required ...string) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
 	for _, name := range required {
 		if _, err := s.Get(name); err != nil {
 			return err

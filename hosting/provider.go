@@ -139,6 +139,9 @@ func (p *Provider) ValidateRoot() error {
 	if err := p.attachEngine(); err != nil {
 		return err
 	}
+	if err := p.Secrets.Validate(); err != nil {
+		return fmt.Errorf("provider %q secrets: %w", p.DisplayName(), err)
+	}
 	filter := p.filter()
 	if _, err := filter.compile(); err != nil {
 		return fmt.Errorf("provider %q filter: %w", p.DisplayName(), err)

@@ -189,6 +189,15 @@ func TestProvider_ValidateRoot(t *testing.T) {
 	if err := noConfig.ValidateRoot(); err != nil {
 		t.Errorf("ValidateRoot without config: %v", err)
 	}
+
+	missingSecretKey := &Provider{
+		Kind:     "root-test",
+		Endpoint: "https://example.com",
+		Secrets:  secrets.Secrets{{Name: "token"}},
+	}
+	if err := missingSecretKey.ValidateRoot(); !errors.Is(err, secrets.ErrMissingKey) {
+		t.Fatalf("ValidateRoot missing secret key err = %v, want ErrMissingKey", err)
+	}
 }
 
 func TestProvider_DeploymentFilesValidatesRoot(t *testing.T) {
@@ -313,7 +322,7 @@ func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 		Include:  FilterRules{Paths: []string{`\.html$`}},
 		Secrets: secrets.Secrets{
 			{Name: "token", Key: "TOKEN"},
-			{Name: "missing"},
+			{Name: "missing", Key: "MISSING"},
 		},
 	}
 	runtime := &session.Session{

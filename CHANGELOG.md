@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Changed secret declarations to require `key`; `Secret.LookupKey()` now returns only `key` and no longer falls back to `name`.
+
 ## v0.19.0 (2026-04-30)
 
 * Added `HostingProviders` as the primary deployment surface, with provider names supplied by map keys and `HostingEnvironment` reduced to an ordered provider-name selection.

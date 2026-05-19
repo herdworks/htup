@@ -31,10 +31,24 @@ func TestSecrets_GetAndRequire(t *testing.T) {
 	}
 }
 
-func TestSecret_LookupKeyDefaultsToName(t *testing.T) {
-	secret := &Secret{Name: "token"}
-	if secret.LookupKey() != "token" {
-		t.Errorf("LookupKey = %q, want token", secret.LookupKey())
+func TestSecret_LookupKeyReturnsKey(t *testing.T) {
+	secret := &Secret{Name: "token", Key: "DEPLOY_TOKEN"}
+	if secret.LookupKey() != "DEPLOY_TOKEN" {
+		t.Errorf("LookupKey = %q, want DEPLOY_TOKEN", secret.LookupKey())
+	}
+}
+
+func TestSecrets_ValidateRequiresNameAndKey(t *testing.T) {
+	if err := (Secrets{{Name: "token", Key: "DEPLOY_TOKEN"}}).Validate(); err != nil {
+		t.Fatalf("Validate complete secret: %v", err)
+	}
+
+	if err := (Secrets{{Key: "DEPLOY_TOKEN"}}).Validate(); !errors.Is(err, ErrMissingName) {
+		t.Fatalf("Validate missing name err = %v, want ErrMissingName", err)
+	}
+
+	if err := (Secrets{{Name: "token"}}).Validate(); !errors.Is(err, ErrMissingKey) {
+		t.Fatalf("Validate missing key err = %v, want ErrMissingKey", err)
 	}
 }
 
