@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.20.0 (2026-05-21)
+
 * Added local-only provider readiness checks via `HostingProvider.Ready`, `HostingProviders.Ready`, `HostingEnvironment.Ready`, and the `HostingProviderEngine.Ready` interface method.
 * Added `htdt ready` to verify runtime-resolved provider credentials without remote network probes.
 
