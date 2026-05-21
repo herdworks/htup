@@ -120,20 +120,39 @@ func finishSettings(provider *hosting.Provider, cfg *settings) (*settings, error
 
 // Validate validates S3-specific configuration.
 func (Engine) Validate(provider *hosting.Provider) error {
-	cfg, err := newSettings(provider)
+	_, err := validateSettings(provider)
+	return err
+}
+
+// Ready validates S3 configuration and confirms runtime credentials can build a
+// local client. It intentionally does not perform remote S3 network probes.
+func (engine Engine) Ready(ctx context.Context, runtime *session.Session, provider *hosting.Provider) error {
+	if runtime == nil {
+		runtime = &session.Session{}
+	}
+	cfg, err := validateSettings(provider)
 	if err != nil {
 		return err
 	}
+	_, err = engine.newClient(ctx, runtime, provider, cfg)
+	return err
+}
+
+func validateSettings(provider *hosting.Provider) (*settings, error) {
+	cfg, err := newSettings(provider)
+	if err != nil {
+		return nil, err
+	}
 	if cfg.AddressingStyle == AddressingStylePath && cfg.Bucket == "" {
-		return errors.New("s3: bucket is empty")
+		return nil, errors.New("s3: bucket is empty")
 	}
 	if cfg.ConditionalMode != ConditionalModeNone && cfg.ConditionalMode != ConditionalModeETag {
-		return fmt.Errorf("s3: unknown conditional_mode %q", cfg.ConditionalMode)
+		return nil, fmt.Errorf("s3: unknown conditional_mode %q", cfg.ConditionalMode)
 	}
 	if err := provider.Secrets.Require(secretAccessKeyID, secretSecretAccessKey); err != nil {
-		return fmt.Errorf("s3: %w", err)
+		return nil, fmt.Errorf("s3: %w", err)
 	}
-	return nil
+	return cfg, nil
 }
 
 // Deploy discovers files under root, applies the provider filter, and uploads

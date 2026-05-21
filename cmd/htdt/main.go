@@ -28,6 +28,8 @@ func main() {
 		err = runDeploy(ctx, args)
 	case "validate":
 		err = runValidate(ctx, args)
+	case "ready":
+		err = runReady(ctx, args)
 	case "list":
 		err = runList(ctx, args)
 	case "version", "--version", "-v":
@@ -54,6 +56,7 @@ func usage() {
 Usage:
   htdt deploy    --config <file> --environment <name> --source <path> [--dry-run]
   htdt validate  --config <file>
+  htdt ready     --config <file> [--environment <name>]
   htdt list      --config <file>
   htdt version`)
 }

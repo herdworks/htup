@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added local-only provider readiness checks via `HostingProvider.Ready`, `HostingProviders.Ready`, `HostingEnvironment.Ready`, and the `HostingProviderEngine.Ready` interface method.
+* Added `htdt ready` to verify runtime-resolved provider credentials without remote network probes.
+
 ## v0.19.1 (2026-05-19)
 
 * Changed secret declarations to require `key`; `Secret.LookupKey()` now returns only `key` and no longer falls back to `name`.

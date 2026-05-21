@@ -87,6 +87,55 @@ func runValidate(ctx context.Context, args []string) error {
 	return nil
 }
 
+// runReady implements `htdt ready`. It parses config and runs runtime-aware
+// local readiness checks for each selected provider. Secrets are resolved from
+// OS environment variables via Session().
+func runReady(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("ready", flag.ContinueOnError)
+	var (
+		configPath = fs.String("config", "", "path to JSON or YAML config file")
+		envName    = fs.String("environment", "", "optional environment name from config")
+	)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *configPath == "" {
+		fs.Usage()
+		return fmt.Errorf("ready: --config is required")
+	}
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+
+	envNames := sortedEnvNames(cfg)
+	if *envName != "" {
+		if _, err := cfg.Environment(*envName); err != nil {
+			return err
+		}
+		envNames = []string{*envName}
+	}
+
+	session := Session()
+	for _, envName := range envNames {
+		env := cfg.Environments[envName]
+		if env == nil {
+			return fmt.Errorf("environment %q is empty", envName)
+		}
+		for _, providerName := range *env {
+			p := cfg.Providers[providerName]
+			if p == nil {
+				return fmt.Errorf("environment %q provider %q: provider not found", envName, providerName)
+			}
+			if err := p.Ready(ctx, session); err != nil {
+				return fmt.Errorf("environment %q provider %q: %w", envName, providerName, err)
+			}
+			fmt.Printf("ready  %s / %s (%s)\n", envName, providerName, p.Kind)
+		}
+	}
+	return nil
+}
+
 // runList implements `htdt list`. Prints environments + provider kinds.
 func runList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)

@@ -21,6 +21,10 @@ func (e *fakeHostingProviderEngine) Validate(provider *HostingProvider) error {
 	return nil
 }
 
+func (e *fakeHostingProviderEngine) Ready(ctx context.Context, session *Session, provider *HostingProvider) error {
+	return nil
+}
+
 func (e *fakeHostingProviderEngine) Deploy(ctx context.Context, session *Session, provider *HostingProvider, root string, files []*File) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()

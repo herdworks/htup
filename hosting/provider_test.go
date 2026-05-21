@@ -20,6 +20,10 @@ func (e *fakeEngine) Validate(provider *Provider) error {
 	return nil
 }
 
+func (e *fakeEngine) Ready(ctx context.Context, session *session.Session, provider *Provider) error {
+	return nil
+}
+
 func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
 	return nil
 }
@@ -30,8 +34,26 @@ func (e *failingEngine) Validate(provider *Provider) error {
 	return nil
 }
 
+func (e *failingEngine) Ready(ctx context.Context, session *session.Session, provider *Provider) error {
+	return nil
+}
+
 func (e *failingEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
 	return errors.New("deploy failed")
+}
+
+type failingReadyEngine struct{}
+
+func (e *failingReadyEngine) Validate(provider *Provider) error {
+	return nil
+}
+
+func (e *failingReadyEngine) Ready(ctx context.Context, session *session.Session, provider *Provider) error {
+	return errors.New("ready failed")
+}
+
+func (e *failingReadyEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
+	return nil
 }
 
 func mkFile(t *testing.T, root, rel string) *File {
@@ -197,6 +219,19 @@ func TestProvider_ValidateRoot(t *testing.T) {
 	}
 	if err := missingSecretKey.ValidateRoot(); !errors.Is(err, secrets.ErrMissingKey) {
 		t.Fatalf("ValidateRoot missing secret key err = %v, want ErrMissingKey", err)
+	}
+}
+
+func TestProvider_ReadyDelegatesEngine(t *testing.T) {
+	RegisterEngine("ready-fails", &failingReadyEngine{})
+
+	provider := &Provider{
+		Kind:     "ready-fails",
+		Endpoint: "https://example.com",
+	}
+
+	if err := provider.Ready(context.Background(), nil); err == nil || err.Error() != "ready failed" {
+		t.Fatalf("Ready error = %v, want ready failed", err)
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/herdworks/hyperproviders-go/hosting"
+	"github.com/herdworks/hyperproviders-go/secrets"
+	"github.com/herdworks/hyperproviders-go/session"
 )
 
 // setupLocalRemote creates a bare git repo that serves as the remote for
@@ -293,6 +295,39 @@ func TestGitProvider_ValidateRejectsFresh(t *testing.T) {
 	}
 	if got, want := err.Error(), "git: fresh is not supported"; got != want {
 		t.Fatalf("Validate() error = %q, want %q", got, want)
+	}
+}
+
+func TestGitProvider_ReadyFileRemoteNeedsNoAuth(t *testing.T) {
+	p := newProvider(t, "file:///tmp/remote.git")
+
+	if err := p.Ready(context.Background(), nil); err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+}
+
+func TestGitProvider_ReadyHTTPRequiresRuntimeToken(t *testing.T) {
+	p := newProvider(t, "https://example.com/repo.git")
+	p.Secrets = secrets.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
+
+	err := p.Ready(context.Background(), &session.Session{})
+	if err == nil {
+		t.Fatal("Ready error = nil, want missing token")
+	}
+	if !strings.Contains(err.Error(), "GIT_TOKEN") {
+		t.Fatalf("Ready error = %v, want GIT_TOKEN", err)
+	}
+}
+
+func TestGitProvider_ReadyHTTPWithRuntimeToken(t *testing.T) {
+	p := newProvider(t, "https://example.com/repo.git")
+	p.Secrets = secrets.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
+	runtime := &session.Session{
+		Secrets: secrets.Values{"GIT_TOKEN": secrets.String("secret")},
+	}
+
+	if err := p.Ready(context.Background(), runtime); err != nil {
+		t.Fatalf("Ready: %v", err)
 	}
 }
 

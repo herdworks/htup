@@ -39,6 +39,7 @@ type Provider struct {
 // filtering, or environment fan-out.
 type Engine interface {
 	Validate(provider *Provider) error
+	Ready(ctx context.Context, runtime *session.Session, provider *Provider) error
 	Deploy(ctx context.Context, runtime *session.Session, provider *Provider, root string, files []*File) error
 }
 
@@ -128,6 +129,18 @@ func (p *Provider) Validate() error {
 	return p.engine.Validate(p)
 }
 
+// Ready validates root-level fields, then delegates runtime-aware local
+// readiness checks to the provider engine. Readiness does not perform network
+// probes; it confirms configuration, declared secrets, and runtime-resolved
+// local credentials are usable.
+func (p *Provider) Ready(ctx context.Context, runtime *session.Session) error {
+	runtime = readySession(runtime)
+	if err := p.ValidateRoot(); err != nil {
+		return err
+	}
+	return p.engine.Ready(ctx, runtime, p)
+}
+
 // ValidateRoot runs baseline checks shared by every Provider.
 func (p *Provider) ValidateRoot() error {
 	if p.Kind == "" {
@@ -198,6 +211,7 @@ func (p *Provider) Deploy(ctx context.Context, root string, runtime *session.Ses
 // DeployNamed discovers files, applies the provider filter, and delegates the
 // selected files to the provider engine using name as the provider display name.
 func (p *Provider) DeployNamed(ctx context.Context, name string, root string, runtime *session.Session) (err error) {
+	runtime = readySession(runtime)
 	ctx = WithProviderName(ctx, p.providerName(name))
 	if !DeploymentActive(ctx) {
 		var finish func(error)
@@ -208,11 +222,15 @@ func (p *Provider) DeployNamed(ctx context.Context, name string, root string, ru
 	providerName := ProviderName(ctx, p)
 	LogProvider(ctx, p, "hosting", providerName, "init")
 
-	if err := p.Validate(); err != nil {
+	if err := p.ValidateRoot(); err != nil {
 		LogProvider(ctx, p, "hosting", providerName, "failed")
 		return err
 	}
 	p.logSecrets(ctx, runtime)
+	if err := p.engine.Ready(ctx, runtime, p); err != nil {
+		LogProvider(ctx, p, "hosting", providerName, "failed")
+		return err
+	}
 
 	files, err := walk(root)
 	if err != nil {
@@ -263,6 +281,13 @@ func (p *Provider) logSecrets(ctx context.Context, runtime *session.Session) {
 		}
 		LogSecret(ctx, p, secret.Name, state)
 	}
+}
+
+func readySession(runtime *session.Session) *session.Session {
+	if runtime == nil {
+		return &session.Session{}
+	}
+	return runtime
 }
 
 // UnmarshalJSON decodes the common provider envelope. Provider engines are

@@ -105,8 +105,13 @@ go install github.com/herdworks/hyperproviders-go/cmd/htdt@latest
 
 htdt deploy --config ./htdt.json --environment production --source ./build
 htdt validate --config ./htdt.json
+htdt ready    --config ./htdt.json --environment production
 htdt list     --config ./htdt.json
 ```
+
+`validate` checks static provider configuration. `ready` also resolves runtime
+secrets from OS environment variables and performs local provider-specific
+credential checks, without contacting remote services.
 
 Example `htdt.json`:
 

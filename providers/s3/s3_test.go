@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/herdworks/hyperproviders-go/hosting"
 	"github.com/herdworks/hyperproviders-go/secrets"
+	"github.com/herdworks/hyperproviders-go/session"
 )
 
 func TestUnmarshalHostingProvider(t *testing.T) {
@@ -168,6 +170,44 @@ func TestValidate_RejectsInvalidWorkers(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "workers must be at least 1") {
 		t.Fatalf("error = %v, want workers minimum", err)
+	}
+}
+
+func TestReady_RequiresRuntimeSecrets(t *testing.T) {
+	provider := readyProvider()
+
+	err := provider.Ready(context.Background(), &session.Session{})
+	if err == nil {
+		t.Fatal("Ready error = nil, want missing secret")
+	}
+	if !strings.Contains(err.Error(), "AWS_ACCESS_KEY_ID") {
+		t.Fatalf("Ready error = %v, want access key", err)
+	}
+}
+
+func TestReady_WithRuntimeSecrets(t *testing.T) {
+	provider := readyProvider()
+	runtime := &session.Session{
+		Secrets: secrets.Values{
+			"AWS_ACCESS_KEY_ID":     secrets.String("access"),
+			"AWS_SECRET_ACCESS_KEY": secrets.String("secret"),
+		},
+	}
+
+	if err := provider.Ready(context.Background(), runtime); err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+}
+
+func readyProvider() *hosting.Provider {
+	return &hosting.Provider{
+		Kind:     Kind,
+		Endpoint: "https://example.com",
+		Config:   map[string]any{"bucket": "assets"},
+		Secrets: secrets.Secrets{
+			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
+			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
+		},
 	}
 }
 

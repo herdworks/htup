@@ -50,6 +50,23 @@ func (providers HostingProviders) Deploy(ctx context.Context, root string, sessi
 	return err
 }
 
+// Ready runs local runtime-aware readiness checks for every selected provider.
+// It validates provider configuration and confirms runtime-resolved local
+// credentials are usable, but does not perform network probes.
+func (providers HostingProviders) Ready(ctx context.Context, session *Session) error {
+	if err := providers.Validate(); err != nil {
+		return err
+	}
+
+	errs := make([]error, 0, len(providers))
+	for name, provider := range providers {
+		if err := provider.Ready(ctx, session); err != nil {
+			errs = append(errs, fmt.Errorf("provider %q: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Plan returns each selected provider's deployment-relative paths after
 // discovery and provider filtering.
 func (providers HostingProviders) Plan(root string) (map[string][]string, error) {
@@ -132,6 +149,16 @@ func (environment HostingEnvironment) Deploy(ctx context.Context, providers Host
 		return err
 	}
 	return selected.Deploy(ctx, root, session)
+}
+
+// Ready runs local runtime-aware readiness checks for the environment's
+// selected provider names.
+func (environment HostingEnvironment) Ready(ctx context.Context, providers HostingProviders, session *Session) error {
+	selected, err := environment.Select(providers)
+	if err != nil {
+		return err
+	}
+	return selected.Ready(ctx, session)
 }
 
 // Plan returns the environment's selected provider plan against providers.

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +75,30 @@ environments:
 	assertLoadedConfig(t, cfg)
 }
 
+func TestRunReady_UsesEnvironmentSecrets(t *testing.T) {
+	path := writeReadyConfig(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "access")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+
+	if err := runReady(context.Background(), []string{"--config", path, "--environment", "production"}); err != nil {
+		t.Fatalf("runReady: %v", err)
+	}
+}
+
+func TestRunReady_ReportsMissingSecret(t *testing.T) {
+	path := writeReadyConfig(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+
+	err := runReady(context.Background(), []string{"--config", path, "--environment", "production"})
+	if err == nil {
+		t.Fatal("runReady error = nil, want missing secret")
+	}
+	if !strings.Contains(err.Error(), "AWS_ACCESS_KEY_ID") {
+		t.Fatalf("runReady error = %v, want missing access key", err)
+	}
+}
+
 func writeConfig(t *testing.T, name string, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
@@ -80,6 +106,27 @@ func writeConfig(t *testing.T, name string, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func writeReadyConfig(t *testing.T) string {
+	t.Helper()
+	return writeConfig(t, "ready.json", `{
+		"version": 1,
+		"providers": {
+			"assets": {
+				"kind": "s3",
+				"endpoint": "https://example.com",
+				"config": { "bucket": "assets" },
+				"secrets": [
+					{ "name": "access_key_id", "key": "AWS_ACCESS_KEY_ID" },
+					{ "name": "secret_access_key", "key": "AWS_SECRET_ACCESS_KEY" }
+				]
+			}
+		},
+		"environments": {
+			"production": ["assets"]
+		}
+	}`)
 }
 
 func assertLoadedConfig(t *testing.T, cfg *Config) {

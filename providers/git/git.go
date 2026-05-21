@@ -158,17 +158,36 @@ func normalizePublishDir(dir string) (string, error) {
 
 // Validate validates Git-specific configuration.
 func (Engine) Validate(provider *hosting.Provider) error {
-	cfg, err := newSettings(provider)
+	_, err := validateSettings(provider)
+	return err
+}
+
+// Ready validates Git configuration and confirms local auth material can be
+// resolved and parsed. It intentionally does not contact the remote.
+func (Engine) Ready(ctx context.Context, runtime *session.Session, provider *hosting.Provider) error {
+	if runtime == nil {
+		runtime = &session.Session{}
+	}
+	cfg, err := validateSettings(provider)
 	if err != nil {
 		return err
 	}
+	_, err = resolveAuth(ctx, runtime, cfg.RemoteURL, provider.Secrets)
+	return err
+}
+
+func validateSettings(provider *hosting.Provider) (*settings, error) {
+	cfg, err := newSettings(provider)
+	if err != nil {
+		return nil, err
+	}
 	if cfg.RemoteURL == "" {
-		return errors.New("git: endpoint is empty")
+		return nil, errors.New("git: endpoint is empty")
 	}
 	if cfg.Branch == "" {
-		return errors.New("git: branch is empty")
+		return nil, errors.New("git: branch is empty")
 	}
-	return nil
+	return cfg, nil
 }
 
 // Deploy executes the full flow: open-or-clone, fetch, reset, overwrite working
