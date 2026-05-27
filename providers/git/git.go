@@ -71,6 +71,7 @@ type settings struct {
 	Branch      string
 	AuthorName  string
 	AuthorEmail string
+	KnownHosts  string
 
 	TagEnabled    bool
 	TagPrefix     string
@@ -83,6 +84,7 @@ type providerConfig struct {
 	Branch      string `json:"branch" yaml:"branch"`
 	AuthorName  string `json:"author_name,omitempty" yaml:"author_name,omitempty"`
 	AuthorEmail string `json:"author_email,omitempty" yaml:"author_email,omitempty"`
+	KnownHosts  string `json:"known_hosts,omitempty" yaml:"known_hosts,omitempty"`
 
 	TagEnabled    bool   `json:"tag_enabled,omitempty" yaml:"tag_enabled,omitempty"`
 	TagPrefix     string `json:"tag_prefix,omitempty" yaml:"tag_prefix,omitempty"`
@@ -113,6 +115,7 @@ func newSettings(provider *hosting.Provider) (*settings, error) {
 			Branch:        decoded.Branch,
 			AuthorName:    decoded.AuthorName,
 			AuthorEmail:   decoded.AuthorEmail,
+			KnownHosts:    decoded.KnownHosts,
 			TagEnabled:    decoded.TagEnabled,
 			TagPrefix:     decoded.TagPrefix,
 			TagRetainLast: decoded.TagRetainLast,
@@ -172,7 +175,7 @@ func (Engine) Ready(ctx context.Context, runtime *session.Session, provider *hos
 	if err != nil {
 		return err
 	}
-	_, err = resolveAuth(ctx, runtime, cfg.RemoteURL, provider.Secrets)
+	_, err = resolveAuth(ctx, runtime, cfg, provider.Secrets)
 	return err
 }
 
@@ -197,7 +200,7 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 	if err != nil {
 		return err
 	}
-	auth, err := resolveAuth(ctx, runtime, cfg.RemoteURL, provider.Secrets)
+	auth, err := resolveAuth(ctx, runtime, cfg, provider.Secrets)
 	if err != nil {
 		return fmt.Errorf("git: auth: %w", err)
 	}

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added `providers/files`, a secret provider that treats secret keys as filesystem paths and resolves them to file contents with support for only `~/`, `$HOME/`, and `${HOME}/` expansion.
+* Added Git provider `config.known_hosts` for literal OpenSSH `known_hosts` content; SSH host key verification now uses that callback when configured and `ssh.InsecureIgnoreHostKey` when omitted.
+* Changed Git SSH authentication to require `ssh_private_key` PEM content and removed provider-level `ssh_key_path` file-reading behavior so hosting providers treat secret providers as key/value stores.
+* Changed declared Git `ssh_passphrase` secrets to return resolution errors instead of being silently ignored.
+
 ## v0.20.0 (2026-05-21)
 
 * Added local-only provider readiness checks via `HostingProvider.Ready`, `HostingProviders.Ready`, `HostingEnvironment.Ready`, and the `HostingProviderEngine.Ready` interface method.

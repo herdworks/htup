@@ -24,7 +24,7 @@ Symlinks are not supported in deployment roots.
 * **S3** — AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, any S3-compatible object store.
     Concurrent uploads (`workers`, default `10`), opt-in ETag-based conditional PUT (`conditional_mode: "etag"`) for skip-if-unchanged deploys.
 * **Git** — any git remote (HTTPS or SSH), backed by `go-git/v5`.
-    Pure-Go, delta-efficient (unchanged files reuse blob IDs), provider workspace under `.provider/git/`, optional `publish_dir` subtree, opt-in build tagging with retention pruning.
+    Pure-Go, delta-efficient (unchanged files reuse blob IDs), provider workspace under `.provider/git/`, optional `publish_dir` subtree, optional `known_hosts` config, opt-in build tagging with retention pruning.
 * **SSH** (planned)
 * **Containers** (planned)
 
@@ -82,11 +82,15 @@ identifier used for selection, and each environment is an ordered list of those
 provider names.
 
 Secret declarations require both `name` and `key`: `name` is the provider-defined
-credential role, and `key` is the caller-defined runtime lookup key. When
-`Session.SecretProviders` is omitted, HyperProviders resolves secrets only from
-`Session.Secrets`. Add `providers/env.New()` explicitly when environment
-variable lookup should be available. Add `providers/runtime.New()` explicitly
-when runtime secrets should participate in a custom precedence list.
+credential role, and `key` is the caller-defined runtime lookup key. Hosting
+providers treat secret providers as key/value stores and do not perform
+provider-specific secondary lookups. When `Session.SecretProviders` is omitted,
+HyperProviders resolves secrets only from `Session.Secrets`. Add
+`providers/env.New()` explicitly when environment variable lookup should be
+available. Add `providers/files.New()` explicitly when secret keys should be
+read as local filesystem paths; the files provider expands only `~/`, `$HOME/`,
+and `${HOME}/`. Add `providers/runtime.New()` explicitly when runtime secrets
+should participate in a custom precedence list.
 Import each provider engine package you need before validating, planning, or
 deploying so its `init` registration makes that `kind` available.
 
@@ -99,13 +103,15 @@ Generic provider fields (`kind`, `endpoint`, `base_url`, `include`, `exclude`, `
 Provider-specific settings live under `config`.
 For S3 providers, `workers` controls concurrent object uploads and must be at least `1` when set.
 For Git providers, `publish_dir` controls where files are written in the repository and defaults to `.`.
+For Git SSH remotes, `known_hosts` is optional literal OpenSSH `known_hosts` content; when omitted, SSH host key verification uses `ssh.InsecureIgnoreHostKey`.
+Git SSH auth requires an `ssh_private_key` secret whose resolved value is PEM private key content. CLI callers that want to keep key material in a file can include `providers/files.New()` or `providers/files.NewWithBaseDirectory(baseDir)` in their session and configure `ssh_private_key.key` as the file path.
 
 ```sh
 go install github.com/herdworks/hyperproviders-go/cmd/htdt@latest
 
-htdt deploy --config ./htdt.json --environment production --source ./build
 htdt validate --config ./htdt.json
 htdt ready    --config ./htdt.json --environment production
+htdt deploy   --config ./htdt.json --environment production --source ./build
 htdt list     --config ./htdt.json
 ```
 

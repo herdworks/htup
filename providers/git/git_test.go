@@ -2,7 +2,10 @@ package git
 
 import (
 	"context"
+	"crypto/ed25519"
+	cryptorand "crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +14,12 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/herdworks/hyperproviders-go/hosting"
+	"github.com/herdworks/hyperproviders-go/providers/files"
 	"github.com/herdworks/hyperproviders-go/secrets"
 	"github.com/herdworks/hyperproviders-go/session"
+	stdssh "golang.org/x/crypto/ssh"
 )
 
 // setupLocalRemote creates a bare git repo that serves as the remote for
@@ -331,6 +337,117 @@ func TestGitProvider_ReadyHTTPWithRuntimeToken(t *testing.T) {
 	}
 }
 
+func TestGitProvider_ReadySSHRequiresPrivateKey(t *testing.T) {
+	p := newProvider(t, "git@example.com:repo.git")
+	p.Secrets = secrets.Secrets{{Name: "ssh_key_path", Key: "DEPLOY_SSH_KEY"}}
+	runtime := &session.Session{
+		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String("/tmp/deploy_key")},
+	}
+
+	err := p.Ready(context.Background(), runtime)
+	if err == nil {
+		t.Fatal("Ready error = nil, want missing ssh_private_key")
+	}
+	if !strings.Contains(err.Error(), secretSSHPrivateKey) {
+		t.Fatalf("Ready error = %v, want %s", err, secretSSHPrivateKey)
+	}
+}
+
+func TestGitProvider_ReadySSHWithRuntimePrivateKey(t *testing.T) {
+	p := newProvider(t, "git@example.com:repo.git")
+	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	runtime := &session.Session{
+		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
+	}
+
+	if err := p.Ready(context.Background(), runtime); err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+
+	cfg, err := newSettings(p)
+	if err != nil {
+		t.Fatalf("newSettings: %v", err)
+	}
+	auth, err := resolveAuth(context.Background(), runtime, cfg, p.Secrets)
+	if err != nil {
+		t.Fatalf("resolveAuth: %v", err)
+	}
+	publicKeys, ok := auth.(*gitssh.PublicKeys)
+	if !ok {
+		t.Fatalf("auth = %T, want *gitssh.PublicKeys", auth)
+	}
+	if publicKeys.HostKeyCallback == nil {
+		t.Fatal("HostKeyCallback = nil, want explicit callback")
+	}
+}
+
+func TestGitProvider_ReadySSHWithFilesPrivateKey(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "deploy_key.pem")
+	if err := os.WriteFile(keyPath, []byte(testSSHPrivateKeyPEM(t)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newProvider(t, "git@example.com:repo.git")
+	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: keyPath}}
+	runtime := &session.Session{
+		SecretProviders: []secrets.Provider{files.New()},
+	}
+
+	if err := p.Ready(context.Background(), runtime); err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+}
+
+func TestGitProvider_ReadySSHWithKnownHosts(t *testing.T) {
+	p := newProvider(t, "git@example.com:repo.git")
+	p.Config["known_hosts"] = testKnownHostsLine(t)
+	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	runtime := &session.Session{
+		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
+	}
+
+	if err := p.Ready(context.Background(), runtime); err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+}
+
+func TestGitProvider_ReadySSHRejectsInvalidKnownHosts(t *testing.T) {
+	p := newProvider(t, "git@example.com:repo.git")
+	p.Config["known_hosts"] = "not known_hosts"
+	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	runtime := &session.Session{
+		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
+	}
+
+	err := p.Ready(context.Background(), runtime)
+	if err == nil {
+		t.Fatal("Ready error = nil, want known_hosts error")
+	}
+	if !strings.Contains(err.Error(), "known_hosts") {
+		t.Fatalf("Ready error = %v, want known_hosts", err)
+	}
+}
+
+func TestGitProvider_ReadySSHReportsMissingPassphrase(t *testing.T) {
+	p := newProvider(t, "git@example.com:repo.git")
+	p.Secrets = secrets.Secrets{
+		{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"},
+		{Name: secretSSHPassphrase, Key: "DEPLOY_SSH_PASSPHRASE"},
+	}
+	runtime := &session.Session{
+		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
+	}
+
+	err := p.Ready(context.Background(), runtime)
+	if err == nil {
+		t.Fatal("Ready error = nil, want missing passphrase")
+	}
+	if !strings.Contains(err.Error(), secretSSHPassphrase) {
+		t.Fatalf("Ready error = %v, want %s", err, secretSSHPassphrase)
+	}
+}
+
 func TestSettings_WorkdirSeparatesProviderWorkspaces(t *testing.T) {
 	root := t.TempDir()
 	cfg := &settings{
@@ -427,4 +544,30 @@ func TestGitProvider_UnmarshalHostingProvider(t *testing.T) {
 	if err := p.Validate(); err != nil {
 		t.Errorf("Validate: %v", err)
 	}
+}
+
+func testSSHPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+	_, privateKey, err := ed25519.GenerateKey(cryptorand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := stdssh.MarshalPrivateKey(privateKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(block))
+}
+
+func testKnownHostsLine(t *testing.T) string {
+	t.Helper()
+	_, privateKey, err := ed25519.GenerateKey(cryptorand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := stdssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "example.com " + strings.TrimSpace(string(stdssh.MarshalAuthorizedKey(signer.PublicKey())))
 }
