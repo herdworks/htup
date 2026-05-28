@@ -16,15 +16,20 @@ For example, deploying `relative/path/to/a/build/` writes `relative/path/to/a/bu
 
 A provider's root `include` / `exclude` rules narrow what it accepts.
 HyperProviders does **not** dedupe across providers — the same file can legitimately be deployed by multiple providers (e.g. CDN + backup).
-The top-level `.provider/` directory is reserved for provider-managed workspace state and is never deployed.
+The top-level `.deployment/` directory is reserved for provider-managed workspace state and is never deployed.
 Symlinks are not supported in deployment roots.
+
+Deploy calls require an explicit deployment mode:
+
+* `replacement` treats the deployment root as the desired contents of the provider target. Providers may delete remote resources absent from the artifact set when they support deletions.
+* `overlay` treats the deployment root as a non-authoritative set of writes. Providers must preserve remote resources absent from the artifact set.
 
 ## Providers
 
 * **S3** — AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, any S3-compatible object store.
     Concurrent uploads (`workers`, default `10`), opt-in ETag-based conditional PUT (`conditional_mode: "etag"`) for skip-if-unchanged deploys.
 * **Git** — any git remote (HTTPS or SSH), backed by `go-git/v5`.
-    Pure-Go, delta-efficient (unchanged files reuse blob IDs), provider workspace under `.provider/git/`, optional `publish_dir` subtree, optional `known_hosts` config, opt-in build tagging with retention pruning.
+    Pure-Go, delta-efficient (unchanged files reuse blob IDs), provider workspace under `.deployment/git/`, optional `publish_dir` subtree, optional `known_hosts` config, opt-in build tagging with retention pruning.
 * **SSH** (planned)
 * **Containers** (planned)
 
@@ -65,7 +70,7 @@ session := &hp.Session{
         "AWS_SECRET_ACCESS_KEY": hp.StringSecret(secretAccessKey),
     },
 }
-if err := environment.Deploy(ctx, providers, "./build", session); err != nil { /* ... */ }
+if err := environment.Deploy(ctx, providers, "./build", session, hp.DeploymentModeReplacement); err != nil { /* ... */ }
 ```
 
 Deploys write progress logs to standard output with `[deployment]` and
@@ -103,6 +108,7 @@ Generic provider fields (`kind`, `endpoint`, `base_url`, `include`, `exclude`, `
 Provider-specific settings live under `config`.
 For S3 providers, `workers` controls concurrent object uploads and must be at least `1` when set.
 For Git providers, `publish_dir` controls where files are written in the repository and defaults to `.`.
+For Git providers, `replacement` clears `publish_dir` before writing the deployment root, while `overlay` writes only provided files and preserves existing branch files that are absent from the deployment root.
 For Git SSH remotes, `known_hosts` is optional literal OpenSSH `known_hosts` content; when omitted, SSH host key verification uses `ssh.InsecureIgnoreHostKey`.
 Git SSH auth requires an `ssh_private_key` secret whose resolved value is PEM private key content. CLI callers that want to keep key material in a file can include `providers/files.New()` or `providers/files.NewWithBaseDirectory(baseDir)` in their session and configure `ssh_private_key.key` as the file path.
 
@@ -111,7 +117,7 @@ go install github.com/herdworks/hyperproviders-go/cmd/htdt@latest
 
 htdt validate --config ./htdt.json
 htdt ready    --config ./htdt.json --environment production
-htdt deploy   --config ./htdt.json --environment production --source ./build
+htdt deploy   --config ./htdt.json --environment production --source ./build --mode replacement
 htdt list     --config ./htdt.json
 ```
 

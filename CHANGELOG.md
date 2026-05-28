@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added root `.deploymentignore` support during deployment file discovery; ignored paths are removed before provider include/exclude filters run, and the ignore file itself is never deployed.
+* Added generated deployment log files under `.deployment/logs/` that mirror standard output when a deployment root is available.
+* Added explicit deployment modes: `replacement` for authoritative artifact sets and `overlay` for non-authoritative writes that must preserve absent remote resources.
+* Changed `HostingProvider.Deploy`, `HostingProviders.Deploy`, `HostingEnvironment.Deploy`, and the provider engine `Deploy` interface to require a deployment mode argument. **Breaking change:** callers and provider engines must pass or accept an explicit `DeploymentMode`.
+* Changed `htdt deploy` to require `--mode replacement` or `--mode overlay`. **Breaking change:** deploy commands without `--mode` now fail validation.
+* Changed Git overlay deployments to copy and stage only provided files without clearing `publish_dir`; overlay deployments now fail when the remote branch does not exist.
+* Changed S3 deployments to validate the requested deployment mode while retaining existing upload-only behavior for both `replacement` and `overlay`.
+* Changed provider-managed workspace state from the root `.provider/` directory to the root `.deployment/` directory.
+
+## 0.21.0 (2026-05-27)
+
 * Added `providers/files`, a secret provider that treats secret keys as filesystem paths and resolves them to file contents with support for only `~/`, `$HOME/`, and `${HOME}/` expansion.
 * Added Git provider `config.known_hosts` for literal OpenSSH `known_hosts` content; SSH host key verification now uses that callback when configured and `ssh.InsecureIgnoreHostKey` when omitted.
 * Changed Git SSH authentication to require `ssh_private_key` PEM content and removed provider-level `ssh_key_path` file-reading behavior so hosting providers treat secret providers as key/value stores.

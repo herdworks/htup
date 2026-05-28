@@ -192,6 +192,16 @@ func copyFiles(fs billy.Filesystem, publishDir string, files []*hosting.File) er
 	return nil
 }
 
+func stageFiles(wt *git.Worktree, publishDir string, files []*hosting.File) error {
+	for _, file := range files {
+		rel := repoPath(publishDir, file.RelPath())
+		if _, err := wt.Add(rel); err != nil {
+			return fmt.Errorf("add %s: %w", rel, err)
+		}
+	}
+	return nil
+}
+
 func repoPath(publishDir, rel string) string {
 	if publishDir == "." {
 		return rel

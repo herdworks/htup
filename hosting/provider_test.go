@@ -24,7 +24,7 @@ func (e *fakeEngine) Ready(ctx context.Context, session *session.Session, provid
 	return nil
 }
 
-func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
+func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode) error {
 	return nil
 }
 
@@ -38,7 +38,7 @@ func (e *failingEngine) Ready(ctx context.Context, session *session.Session, pro
 	return nil
 }
 
-func (e *failingEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
+func (e *failingEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode) error {
 	return errors.New("deploy failed")
 }
 
@@ -52,7 +52,7 @@ func (e *failingReadyEngine) Ready(ctx context.Context, session *session.Session
 	return errors.New("ready failed")
 }
 
-func (e *failingReadyEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File) error {
+func (e *failingReadyEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode) error {
 	return nil
 }
 
@@ -366,7 +366,7 @@ func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 		},
 	}
 
-	if err := provider.DeployNamed(context.Background(), "assets", root, runtime); err != nil {
+	if err := provider.DeployNamed(context.Background(), "assets", root, runtime, DeploymentModeReplacement); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -399,7 +399,7 @@ func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
 		Kind:     "fail-test",
 		Endpoint: "https://example.com",
 	}
-	err := provider.DeployNamed(context.Background(), "assets", root, nil)
+	err := provider.DeployNamed(context.Background(), "assets", root, nil, DeploymentModeReplacement)
 	if err == nil {
 		t.Fatal("Deploy() error = nil, want error")
 	}

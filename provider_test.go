@@ -25,7 +25,7 @@ func (e *fakeHostingProviderEngine) Ready(ctx context.Context, session *Session,
 	return nil
 }
 
-func (e *fakeHostingProviderEngine) Deploy(ctx context.Context, session *Session, provider *HostingProvider, root string, files []*File) error {
+func (e *fakeHostingProviderEngine) Deploy(ctx context.Context, session *Session, provider *HostingProvider, root string, files []*File, mode DeploymentMode) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, files)
@@ -61,7 +61,7 @@ func TestEnvironment_Deploy_FansOutWithFilters(t *testing.T) {
 			Include:  FilterRules{Types: []string{"^image/"}},
 		},
 	}
-	if err := env.Deploy(context.Background(), providers, root, nil); err != nil {
+	if err := env.Deploy(context.Background(), providers, root, nil, DeploymentModeReplacement); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 

@@ -70,7 +70,7 @@ func TestGitProvider_FirstDeploy(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := p.Deploy(context.Background(), source, nil); err != nil {
+	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestGitProvider_FirstDeployToMissingBranchDoesNotTouchExistingBranch(t *tes
 	seedSource(t, mainSource, map[string]string{"README.md": "main branch"})
 
 	mainProvider := newProvider(t, remote)
-	if err := mainProvider.Deploy(context.Background(), mainSource, nil); err != nil {
+	if err := mainProvider.Deploy(context.Background(), mainSource, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("seed main Deploy: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestGitProvider_FirstDeployToMissingBranchDoesNotTouchExistingBranch(t *tes
 
 	publicProvider := newProvider(t, remote)
 	publicProvider.Config["branch"] = "public"
-	if err := publicProvider.Deploy(context.Background(), publicSource, nil); err != nil {
+	if err := publicProvider.Deploy(context.Background(), publicSource, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("public Deploy: %v", err)
 	}
 
@@ -143,12 +143,12 @@ func TestGitProvider_SecondDeployIsNoOpWhenUnchanged(t *testing.T) {
 	seedSource(t, source, map[string]string{"index.html": "<h1>home</h1>"})
 
 	p := newProvider(t, remote)
-	if err := p.Deploy(context.Background(), source, nil); err != nil {
+	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("first Deploy: %v", err)
 	}
 
 	// Second deploy with identical content should be a no-op.
-	if err := p.Deploy(context.Background(), source, nil); err != nil {
+	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("second Deploy: %v", err)
 	}
 }
@@ -162,7 +162,7 @@ func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := p.Deploy(context.Background(), source, nil); err != nil {
+	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("seed Deploy: %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
 		"about/x.html": "<h1>about</h1>",
 	})
 	p.Config["publish_dir"] = "public"
-	if err := p.Deploy(context.Background(), nextSource, nil); err != nil {
+	if err := p.Deploy(context.Background(), nextSource, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -198,6 +198,69 @@ func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
 	}
 }
 
+func TestGitProvider_OverlayDeployPreservesExistingBranchFiles(t *testing.T) {
+	remote := setupLocalRemote(t)
+	source := t.TempDir()
+	seedSource(t, source, map[string]string{
+		"index.html":              "<h1>home</h1>",
+		"posts/old/index.html":    "<h1>old</h1>",
+		"assets/site.css":         "body { color: black; }",
+		"tags/example/index.html": "<h1>tag</h1>",
+	})
+
+	p := newProvider(t, remote)
+	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement); err != nil {
+		t.Fatalf("seed Deploy: %v", err)
+	}
+
+	partialSource := t.TempDir()
+	seedSource(t, partialSource, map[string]string{
+		"index.html":           "<h1>updated home</h1>",
+		"posts/new/index.html": "<h1>new</h1>",
+	})
+	if err := p.Deploy(context.Background(), partialSource, nil, hosting.DeploymentModeOverlay); err != nil {
+		t.Fatalf("overlay Deploy: %v", err)
+	}
+
+	verifyDir := t.TempDir()
+	if _, err := git.PlainClone(verifyDir, false, &git.CloneOptions{
+		URL:           remote,
+		ReferenceName: plumbing.NewBranchReferenceName("main"),
+	}); err != nil {
+		t.Fatalf("PlainClone: %v", err)
+	}
+	for rel, want := range map[string]string{
+		"index.html":              "<h1>updated home</h1>",
+		"posts/new/index.html":    "<h1>new</h1>",
+		"posts/old/index.html":    "<h1>old</h1>",
+		"assets/site.css":         "body { color: black; }",
+		"tags/example/index.html": "<h1>tag</h1>",
+	} {
+		got, err := os.ReadFile(filepath.Join(verifyDir, rel))
+		if err != nil || string(got) != want {
+			t.Fatalf("%s = %q, %v; want %q", rel, got, err, want)
+		}
+	}
+}
+
+func TestGitProvider_OverlayDeployRequiresExistingBranch(t *testing.T) {
+	remote := setupLocalRemote(t)
+	source := t.TempDir()
+	seedSource(t, source, map[string]string{"index.html": "<h1>home</h1>"})
+
+	p := newProvider(t, remote)
+	err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeOverlay)
+	if err == nil {
+		t.Fatal("Deploy() error = nil, want overlay missing branch error")
+	}
+	if !strings.Contains(err.Error(), "overlay deployment requires existing remote branch") {
+		t.Fatalf("Deploy() error = %v, want overlay missing branch error", err)
+	}
+	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement); err != nil {
+		t.Fatalf("replacement Deploy after failed overlay: %v", err)
+	}
+}
+
 func TestGitProvider_SerializesSameRemoteBranchDeploys(t *testing.T) {
 	remote := setupLocalRemote(t)
 	pagesSource := t.TempDir()
@@ -217,8 +280,12 @@ func TestGitProvider_SerializesSameRemoteBranchDeploys(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for _, deploy := range []func() error{
-		func() error { return pages.DeployNamed(context.Background(), "pages", pagesSource, nil) },
-		func() error { return assets.DeployNamed(context.Background(), "assets", assetsSource, nil) },
+		func() error {
+			return pages.DeployNamed(context.Background(), "pages", pagesSource, nil, hosting.DeploymentModeReplacement)
+		},
+		func() error {
+			return assets.DeployNamed(context.Background(), "assets", assetsSource, nil, hosting.DeploymentModeReplacement)
+		},
 	} {
 		wg.Add(1)
 		go func(deploy func() error) {
@@ -494,7 +561,7 @@ func TestGitProvider_TagEnabled(t *testing.T) {
 	p.Config["tag_prefix"] = "build-"
 
 	ctx := WithBuildID(context.Background(), "abc123")
-	if err := p.Deploy(ctx, source, nil); err != nil {
+	if err := p.Deploy(ctx, source, nil, hosting.DeploymentModeReplacement); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 

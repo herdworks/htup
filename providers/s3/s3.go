@@ -158,7 +158,10 @@ func validateSettings(provider *hosting.Provider) (*settings, error) {
 // Deploy discovers files under root, applies the provider filter, and uploads
 // every selected file concurrently, bounded by the provider's Workers setting
 // or the S3 default. Respects ctx.
-func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File) error {
+func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File, mode hosting.DeploymentMode) error {
+	if err := mode.Validate(); err != nil {
+		return err
+	}
 	cfg, err := newSettings(provider)
 	if err != nil {
 		return err

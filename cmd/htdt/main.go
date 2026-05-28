@@ -54,7 +54,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `htdt — HyperTexting Deploy Tool
 
 Usage:
-  htdt deploy    --config <file> --environment <name> --source <path> [--dry-run]
+  htdt deploy    --config <file> --environment <name> --source <path> --mode <replacement|overlay> [--dry-run]
   htdt validate  --config <file>
   htdt ready     --config <file> [--environment <name>]
   htdt list      --config <file>

@@ -17,14 +17,19 @@ func runDeploy(ctx context.Context, args []string) error {
 		configPath = fs.String("config", "", "path to JSON or YAML config file")
 		envName    = fs.String("environment", "", "environment name from config")
 		source     = fs.String("source", "", "source directory to deploy")
+		modeName   = fs.String("mode", "", "deployment mode: replacement or overlay")
 		dryRun     = fs.Bool("dry-run", false, "list files that would be deployed without uploading")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *configPath == "" || *envName == "" || *source == "" {
+	if *configPath == "" || *envName == "" || *source == "" || *modeName == "" {
 		fs.Usage()
-		return fmt.Errorf("deploy: --config, --environment, and --source are required")
+		return fmt.Errorf("deploy: --config, --environment, --source, and --mode are required")
+	}
+	mode := hp.DeploymentMode(*modeName)
+	if err := mode.Validate(); err != nil {
+		return fmt.Errorf("deploy: %w", err)
 	}
 
 	cfg, err := LoadConfig(*configPath)
@@ -49,7 +54,7 @@ func runDeploy(ctx context.Context, args []string) error {
 		return printDryRun(os.Stdout, cfg.Providers, env, *source)
 	}
 
-	return env.Deploy(ctx, cfg.Providers, *source, Session())
+	return env.Deploy(ctx, cfg.Providers, *source, Session(), mode)
 }
 
 // runValidate implements `htdt validate`. Parses the config and runs

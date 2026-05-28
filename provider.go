@@ -13,15 +13,24 @@ type HostingProvider = hosting.Provider
 type HostingProviders map[string]*HostingProvider
 type HostingProviderEngine = hosting.Engine
 type HostingEnvironment []string
+type DeploymentMode = hosting.DeploymentMode
 
 type File = hosting.File
 type FilterRules = hosting.FilterRules
 
-// Deploy deploys every provider in the map concurrently. Each provider
-// receives the deployment root and owns its file discovery/filtering. Errors
-// from individual providers are aggregated with errors.Join.
-func (providers HostingProviders) Deploy(ctx context.Context, root string, session *Session) (err error) {
+const (
+	DeploymentModeReplacement = hosting.DeploymentModeReplacement
+	DeploymentModeOverlay     = hosting.DeploymentModeOverlay
+)
+
+// Deploy deploys every provider in the map concurrently using mode. Each
+// provider receives the deployment root and owns its file discovery/filtering.
+// Errors from individual providers are aggregated with errors.Join.
+func (providers HostingProviders) Deploy(ctx context.Context, root string, session *Session, mode DeploymentMode) (err error) {
 	if err := providers.Validate(); err != nil {
+		return err
+	}
+	if err := mode.Validate(); err != nil {
 		return err
 	}
 	ctx = hosting.WithDeploymentRoot(ctx, root)
@@ -38,7 +47,7 @@ func (providers HostingProviders) Deploy(ctx context.Context, root string, sessi
 		wg.Add(1)
 		go func(name string, provider *HostingProvider) {
 			defer wg.Done()
-			if err := provider.DeployNamed(ctx, name, root, session); err != nil {
+			if err := provider.DeployNamed(ctx, name, root, session, mode); err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("provider %q: %w", name, err))
 				mu.Unlock()
@@ -143,13 +152,13 @@ func (environment HostingEnvironment) Select(providers HostingProviders) (Hostin
 	return providers.Select([]string(environment))
 }
 
-// Deploy deploys the environment's provider names against providers.
-func (environment HostingEnvironment) Deploy(ctx context.Context, providers HostingProviders, root string, session *Session) error {
+// Deploy deploys the environment's provider names against providers using mode.
+func (environment HostingEnvironment) Deploy(ctx context.Context, providers HostingProviders, root string, session *Session, mode DeploymentMode) error {
 	selected, err := environment.Select(providers)
 	if err != nil {
 		return err
 	}
-	return selected.Deploy(ctx, root, session)
+	return selected.Deploy(ctx, root, session, mode)
 }
 
 // Ready runs local runtime-aware readiness checks for the environment's

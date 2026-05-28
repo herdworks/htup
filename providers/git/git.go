@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -193,9 +194,14 @@ func validateSettings(provider *hosting.Provider) (*settings, error) {
 	return cfg, nil
 }
 
-// Deploy executes the full flow: open-or-clone, fetch, reset, overwrite working
-// tree, stage, commit, optionally tag, push, and optionally prune tags.
-func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File) error {
+// Deploy executes the full flow: open-or-clone, fetch, reset, apply the
+// deployment mode, stage, commit, optionally tag, push, and optionally prune tags.
+// Replacement mode clears publish_dir first; overlay mode writes and stages only
+// the provided files.
+func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File, mode hosting.DeploymentMode) error {
+	if err := mode.Validate(); err != nil {
+		return err
+	}
 	cfg, err := newSettings(provider)
 	if err != nil {
 		return err
@@ -223,11 +229,18 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		return fmt.Errorf("git: open repo: %w", err)
 	}
 	hosting.LogProvider(ctx, provider, "open", remoteResource, "completed")
+	if firstDeploy && mode == hosting.DeploymentModeOverlay {
+		_ = os.RemoveAll(workdir)
+		return overlayMissingBranchError(cfg.Branch)
+	}
 
 	if !firstDeploy {
 		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "starting")
 		if err := fetchOrigin(ctx, repo, auth); err != nil {
 			hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "failed")
+			if mode == hosting.DeploymentModeOverlay && isBranchMissing(err) {
+				return overlayMissingBranchError(cfg.Branch)
+			}
 			return fmt.Errorf("git: fetch origin: %w", err)
 		}
 		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "completed")
@@ -235,6 +248,9 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "starting")
 		if err := resetToOrigin(repo, wt, cfg.Branch); err != nil {
 			hosting.LogProvider(ctx, provider, "reset", remoteBranch, "failed")
+			if mode == hosting.DeploymentModeOverlay && isBranchMissing(err) {
+				return overlayMissingBranchError(cfg.Branch)
+			}
 			return fmt.Errorf("git: reset to origin: %w", err)
 		}
 		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "completed")
@@ -243,14 +259,24 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "skipped")
 	}
 
-	if err := clearPublishDir(wt.Filesystem, cfg.PublishDir); err != nil {
-		return fmt.Errorf("git: clear publish dir: %w", err)
-	}
-	if err := copyFiles(wt.Filesystem, cfg.PublishDir, files); err != nil {
-		return fmt.Errorf("git: write files: %w", err)
-	}
-	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
-		return fmt.Errorf("git: stage: %w", err)
+	switch mode {
+	case hosting.DeploymentModeReplacement:
+		if err := clearPublishDir(wt.Filesystem, cfg.PublishDir); err != nil {
+			return fmt.Errorf("git: clear publish dir: %w", err)
+		}
+		if err := copyFiles(wt.Filesystem, cfg.PublishDir, files); err != nil {
+			return fmt.Errorf("git: write files: %w", err)
+		}
+		if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+			return fmt.Errorf("git: stage: %w", err)
+		}
+	case hosting.DeploymentModeOverlay:
+		if err := copyFiles(wt.Filesystem, cfg.PublishDir, files); err != nil {
+			return fmt.Errorf("git: write files: %w", err)
+		}
+		if err := stageFiles(wt, cfg.PublishDir, files); err != nil {
+			return fmt.Errorf("git: stage: %w", err)
+		}
 	}
 	status, err := wt.Status()
 	if err != nil {
@@ -431,6 +457,10 @@ func deployLock(remoteURL, branch string) *sync.Mutex {
 	key := remoteURL + "\x00" + branch
 	lock, _ := deployLocks.LoadOrStore(key, &sync.Mutex{})
 	return lock.(*sync.Mutex)
+}
+
+func overlayMissingBranchError(branch string) error {
+	return fmt.Errorf("git: overlay deployment requires existing remote branch %q; run a replacement deployment first", branch)
 }
 
 // pushRefSpecs returns the RefSpecs for pushing the current HEAD of the local
