@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.23.0 (2026-05-28)
+
 * **BREAKING:** Changed deployment logging to use explicit `io.Writer` plumbing across deploy entrypoints and provider engines, removing package-global log output mutation. Affected APIs include `hosting.BeginDeployment`, `hosting.Provider.Deploy`, `hosting.Provider.DeployNamed`, `hosting.Engine.Deploy`, `HostingProviders.Deploy`, `HostingEnvironment.Deploy`, and provider engine implementations. Passing nil preserves previous stdout behavior; non-nil writers are used directly.
 * Changed deployment log helpers (`hosting.LogProvider`, `hosting.LogSecret`, `hosting.LogFile`, and `hosting.LogResource`) to accept the deployment writer explicitly.
 * Changed generated deployment log files to mirror the selected deployment writer through a synchronized tee when a deployment root is available.
