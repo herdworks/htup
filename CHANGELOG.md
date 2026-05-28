@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.22.0 (2026-05-28)
+
 * Added root `.deploymentignore` support during deployment file discovery; ignored paths are removed before provider include/exclude filters run, and the ignore file itself is never deployed.
 * Added generated deployment log files under `.deployment/logs/` that mirror standard output when a deployment root is available.
 * Added explicit deployment modes: `replacement` for authoritative artifact sets and `overlay` for non-authoritative writes that must preserve absent remote resources.
@@ -15,7 +17,7 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 * Changed S3 deployments to validate the requested deployment mode while retaining existing upload-only behavior for both `replacement` and `overlay`.
 * Changed provider-managed workspace state from the root `.provider/` directory to the root `.deployment/` directory.
 
-## 0.21.0 (2026-05-27)
+## v0.21.0 (2026-05-27)
 
 * Added `providers/files`, a secret provider that treats secret keys as filesystem paths and resolves them to file contents with support for only `~/`, `$HOME/`, and `${HOME}/` expansion.
 * Added Git provider `config.known_hosts` for literal OpenSSH `known_hosts` content; SSH host key verification now uses that callback when configured and `ssh.InsecureIgnoreHostKey` when omitted.
