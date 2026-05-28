@@ -24,6 +24,7 @@ func (providers HostingProviders) Deploy(ctx context.Context, root string, sessi
 	if err := providers.Validate(); err != nil {
 		return err
 	}
+	ctx = hosting.WithDeploymentRoot(ctx, root)
 	if !hosting.DeploymentActive(ctx) {
 		var finish func(error)
 		ctx, finish = hosting.BeginDeployment(ctx, "")

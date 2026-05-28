@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -66,6 +68,33 @@ func TestBeginDeployment_LogsFailedAfterError(t *testing.T) {
 	got := buf.String()
 	if !strings.Contains(got, "failed") {
 		t.Fatalf("log output = %q, want failed", got)
+	}
+}
+
+func TestBeginDeployment_WritesGeneratedLogFile(t *testing.T) {
+	root := t.TempDir()
+	var buf bytes.Buffer
+	restore := setDeployLogOutput(&buf)
+	defer restore()
+
+	ctx := WithDeploymentRoot(context.Background(), root)
+	ctx, finish := BeginDeployment(ctx, "production")
+	LogProvider(ctx, &Provider{Kind: "s3"}, "hosting", "assets", "ready")
+	finish(nil)
+
+	entries, err := os.ReadDir(filepath.Join(root, ProviderWorkspaceDir, "logs"))
+	if err != nil {
+		t.Fatalf("ReadDir(logs) error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("log file count = %d, want 1", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(root, ProviderWorkspaceDir, "logs", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile(log) error = %v", err)
+	}
+	if got := string(data); got != buf.String() {
+		t.Fatalf("log file = %q, want stdout copy %q", got, buf.String())
 	}
 }
 

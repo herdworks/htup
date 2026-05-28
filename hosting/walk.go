@@ -19,6 +19,10 @@ func walk(root string) ([]*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidRoot, root)
 	}
+	ignore, err := loadDeploymentIgnore(absRoot)
+	if err != nil {
+		return nil, err
+	}
 
 	var files []*File
 	err = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
@@ -33,12 +37,22 @@ func walk(root string) ([]*File, error) {
 			if err != nil {
 				return fmt.Errorf("%w: %s is outside %s", ErrOutsideRoot, path, absRoot)
 			}
-			first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
+			rel = filepath.ToSlash(rel)
+			first, _, _ := strings.Cut(rel, "/")
 			if first == ProviderWorkspaceDir {
 				if d.IsDir() {
 					return filepath.SkipDir
 				}
 				return nil
+			}
+			if ignore.Match(rel) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() && ignore.MatchDir(rel) {
+				return filepath.SkipDir
 			}
 		}
 		if d.IsDir() {

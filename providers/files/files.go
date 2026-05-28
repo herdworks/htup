@@ -73,7 +73,7 @@ func expandHome(key string) (string, error) {
 	case strings.HasPrefix(key, "${HOME}/"):
 		return homePath(strings.TrimPrefix(key, "${HOME}/"))
 	case strings.HasPrefix(key, "~"), strings.HasPrefix(key, "$"):
-		return "", fmt.Errorf("unsupported file path expansion: %s", key)
+		return "", fmt.Errorf("unsupported file secret path expansion: %s", key)
 	default:
 		return key, nil
 	}

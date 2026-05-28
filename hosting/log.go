@@ -5,15 +5,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 )
 
 type deployLogContextKey struct{}
+type deploymentRootContextKey struct{}
 type providerNameContextKey struct{}
 
 type deployLogState struct {
 	environment string
 	active      bool
+	w           io.Writer
+	file        *os.File
+	path        string
 }
 
 var deployLogOutput = struct {
@@ -35,15 +41,24 @@ func BeginDeployment(ctx context.Context, environment string) (context.Context, 
 		return ctx, func(error) {}
 	}
 
-	ctx = context.WithValue(ctx, deployLogContextKey{}, &deployLogState{environment: environment, active: true})
-	logDeploymentState(environment, "starting")
+	w, file, path := newDeploymentLogWriter(ctx)
+	ctx = context.WithValue(ctx, deployLogContextKey{}, &deployLogState{
+		environment: environment,
+		active:      true,
+		w:           w,
+		file:        file,
+		path:        path,
+	})
+	logDeploymentState(ctx, environment, "starting")
 
 	return ctx, func(err error) {
 		if err == nil {
-			logDeploymentState(environment, "completed")
+			logDeploymentState(ctx, environment, "completed")
+			closeDeploymentLogFile(file)
 			return
 		}
-		logDeploymentState(environment, "failed")
+		logDeploymentState(ctx, environment, "failed")
+		closeDeploymentLogFile(file)
 	}
 }
 
@@ -52,12 +67,24 @@ func DeploymentActive(ctx context.Context) bool {
 	return deployLogActive(ctx)
 }
 
+// WithDeploymentRoot attaches the deployment root used for generated provider
+// workspaces and deployment logs.
+func WithDeploymentRoot(ctx context.Context, root string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if root == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, deploymentRootContextKey{}, root)
+}
+
 // LogProvider writes one provider-scoped line.
 func LogProvider(ctx context.Context, provider *Provider, resource, name, state string) {
 	if !deployLogActive(ctx) {
 		return
 	}
-	logDeployf("%s %s %q %s\n", providerLogPrefix(ctx, provider), resource, name, state)
+	logDeployf(ctx, "%s %s %q %s\n", providerLogPrefix(ctx, provider), resource, name, state)
 }
 
 // LogSecret writes one provider-scoped secret resolution line. It logs only the
@@ -79,7 +106,7 @@ func LogResource(ctx context.Context, provider *Provider, destination, mimetype,
 	if !deployLogActive(ctx) {
 		return
 	}
-	logDeployf("%s resource %q type %q %s\n", providerLogPrefix(ctx, provider), destination, mimetype, state)
+	logDeployf(ctx, "%s resource %q type %q %s\n", providerLogPrefix(ctx, provider), destination, mimetype, state)
 }
 
 // WithProviderName attaches the selected provider name to ctx for provider logs.
@@ -127,16 +154,62 @@ func deployLogActive(ctx context.Context) bool {
 	return ok && state.active
 }
 
-func logDeployf(format string, args ...any) {
+func logDeployf(ctx context.Context, format string, args ...any) {
 	deployLogOutput.Lock()
 	defer deployLogOutput.Unlock()
-	fmt.Fprintf(deployLogOutput.w, format, args...)
+	fmt.Fprintf(deployLogWriter(ctx), format, args...)
 }
 
-func logDeploymentState(environment, state string) {
+func logDeploymentState(ctx context.Context, environment, state string) {
 	if environment == "" {
-		logDeployf("[deployment] %s\n", state)
+		logDeployf(ctx, "[deployment] %s\n", state)
 		return
 	}
-	logDeployf("[deployment] environment %q %s\n", environment, state)
+	logDeployf(ctx, "[deployment] environment %q %s\n", environment, state)
+}
+
+func deployLogWriter(ctx context.Context) io.Writer {
+	state, ok := deployLogStateFrom(ctx)
+	if ok && state.w != nil {
+		return state.w
+	}
+	return deployLogOutput.w
+}
+
+func newDeploymentLogWriter(ctx context.Context) (io.Writer, *os.File, string) {
+	base := deployLogOutput.w
+	root, _ := ctx.Value(deploymentRootContextKey{}).(string)
+	if root == "" {
+		return base, nil, ""
+	}
+
+	file, path, err := createDeploymentLogFile(root)
+	if err != nil {
+		fmt.Fprintf(base, "[deployment] log file failed: %v\n", err)
+		return base, nil, ""
+	}
+	return io.MultiWriter(base, file), file, path
+}
+
+func createDeploymentLogFile(root string) (*os.File, string, error) {
+	absRoot, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return nil, "", err
+	}
+	logDir := filepath.Join(absRoot, ProviderWorkspaceDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return nil, "", err
+	}
+	path := filepath.Join(logDir, time.Now().UTC().Format("20060102T150405.000000000Z")+".log")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return nil, "", err
+	}
+	return file, path, nil
+}
+
+func closeDeploymentLogFile(file *os.File) {
+	if file != nil {
+		_ = file.Close()
+	}
 }

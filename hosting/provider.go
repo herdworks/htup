@@ -17,8 +17,8 @@ import (
 
 // ProviderWorkspaceDir is reserved for provider-managed deployment workspace
 // state under the deployment root. Discovery never deploys files from this
-// directory.
-const ProviderWorkspaceDir = ".provider"
+// root-level directory.
+const ProviderWorkspaceDir = ".deployment"
 
 // Provider is a concrete provider configured for an environment. It owns
 // common provider fields and delegates provider-specific behavior to engine.
@@ -212,6 +212,7 @@ func (p *Provider) Deploy(ctx context.Context, root string, runtime *session.Ses
 // selected files to the provider engine using name as the provider display name.
 func (p *Provider) DeployNamed(ctx context.Context, name string, root string, runtime *session.Session) (err error) {
 	runtime = readySession(runtime)
+	ctx = WithDeploymentRoot(ctx, root)
 	ctx = WithProviderName(ctx, p.providerName(name))
 	if !DeploymentActive(ctx) {
 		var finish func(error)

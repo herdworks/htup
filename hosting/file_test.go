@@ -167,8 +167,9 @@ func TestWalk_DeterministicAndRelative(t *testing.T) {
 func TestWalk_IgnoresProviderWorkspaceDir(t *testing.T) {
 	root := t.TempDir()
 	paths := map[string]string{
-		"index.html":                             "deploy me",
-		ProviderWorkspaceDir + "/git/cache/file": "ignore me",
+		"index.html": "deploy me",
+		"nested/" + ProviderWorkspaceDir + "/file.txt": "deploy nested workspace name",
+		ProviderWorkspaceDir + "/git/cache/file":       "ignore me",
 	}
 	for rel, content := range paths {
 		abs := filepath.Join(root, rel)
@@ -184,11 +185,82 @@ func TestWalk_IgnoresProviderWorkspaceDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("Walk returned %d files, want 1", len(files))
+	if len(files) != 2 {
+		t.Fatalf("Walk returned %d files, want 2", len(files))
 	}
-	if got := files[0].RelPath(); got != "index.html" {
-		t.Fatalf("RelPath = %q, want index.html", got)
+	got := []string{files[0].RelPath(), files[1].RelPath()}
+	want := []string{"index.html", "nested/" + ProviderWorkspaceDir + "/file.txt"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("RelPath[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestWalk_AppliesDeploymentIgnore(t *testing.T) {
+	root := t.TempDir()
+	paths := []string{
+		"index.html",
+		"assets/app.css",
+		"build.log",
+		"logs/current.log",
+		DeploymentIgnoreFile,
+	}
+	for _, rel := range paths {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, DeploymentIgnoreFile), []byte("\n/build.log\n logs/ \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := walk(root)
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	got := make([]string, 0, len(files))
+	for _, file := range files {
+		got = append(got, file.RelPath())
+	}
+	want := []string{"assets/app.css", "index.html"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("walk paths = %v, want %v", got, want)
+	}
+}
+
+func TestProvider_DeploymentFilesAppliesDeploymentIgnoreBeforeProviderFilter(t *testing.T) {
+	RegisterEngine("deploymentignore-test", &fakeEngine{})
+
+	root := t.TempDir()
+	for _, rel := range []string{"keep.log", "ignored.log"} {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, DeploymentIgnoreFile), []byte("ignored.log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &Provider{
+		Kind:     "deploymentignore-test",
+		Endpoint: "https://example.com",
+		Include:  FilterRules{Paths: []string{`\.log$`}},
+	}
+	files, err := provider.DeploymentFiles(root)
+	if err != nil {
+		t.Fatalf("DeploymentFiles: %v", err)
+	}
+	if len(files) != 1 || files[0].RelPath() != "keep.log" {
+		t.Fatalf("DeploymentFiles paths = %v, want [keep.log]", files)
 	}
 }
 
