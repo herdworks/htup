@@ -54,7 +54,7 @@ func runDeploy(ctx context.Context, args []string) error {
 		return printDryRun(os.Stdout, cfg.Providers, env, *source)
 	}
 
-	return env.Deploy(ctx, cfg.Providers, *source, Session(), mode)
+	return env.Deploy(ctx, cfg.Providers, *source, Session(), mode, nil)
 }
 
 // runValidate implements `htdt validate`. Parses the config and runs

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -40,7 +42,7 @@ type Provider struct {
 type Engine interface {
 	Validate(provider *Provider) error
 	Ready(ctx context.Context, runtime *session.Session, provider *Provider) error
-	Deploy(ctx context.Context, runtime *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode) error
+	Deploy(ctx context.Context, runtime *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode, w io.Writer) error
 }
 
 var hostingProviderEngines = struct {
@@ -176,10 +178,10 @@ func (p *Provider) DeploymentFiles(root string) ([]*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return p.deploymentFiles(nil, files)
+	return p.deploymentFiles(nil, nil, files)
 }
 
-func (p *Provider) deploymentFiles(ctx context.Context, files []*File) ([]*File, error) {
+func (p *Provider) deploymentFiles(ctx context.Context, w io.Writer, files []*File) ([]*File, error) {
 	providerFilter := p.filter()
 	filter, err := providerFilter.compile()
 	if err != nil {
@@ -193,65 +195,71 @@ func (p *Provider) deploymentFiles(ctx context.Context, files []*File) ([]*File,
 			return nil, err
 		}
 		if ok {
-			LogFile(ctx, p, file, "included")
+			LogFile(w, ctx, p, file, "included")
 			kept = append(kept, file)
 			continue
 		}
-		LogFile(ctx, p, file, "excluded")
+		LogFile(w, ctx, p, file, "excluded")
 	}
 	return kept, nil
 }
 
 // Deploy discovers files, applies the provider filter, and delegates the
 // selected files and deployment mode to the provider engine.
-func (p *Provider) Deploy(ctx context.Context, root string, runtime *session.Session, mode DeploymentMode) (err error) {
-	return p.DeployNamed(ctx, "", root, runtime, mode)
+func (p *Provider) Deploy(ctx context.Context, root string, runtime *session.Session, mode DeploymentMode, w io.Writer) (err error) {
+	return p.DeployNamed(ctx, "", root, runtime, mode, w)
 }
 
 // DeployNamed discovers files, applies the provider filter, and delegates the
 // selected files and deployment mode to the provider engine using name as the
 // provider display name.
-func (p *Provider) DeployNamed(ctx context.Context, name string, root string, runtime *session.Session, mode DeploymentMode) (err error) {
+func (p *Provider) DeployNamed(ctx context.Context, name string, root string, runtime *session.Session, mode DeploymentMode, w io.Writer) (err error) {
+	if w == nil {
+		w = os.Stdout
+	}
+
 	runtime = readySession(runtime)
 	ctx = WithDeploymentRoot(ctx, root)
 	ctx = WithProviderName(ctx, p.providerName(name))
 	if !DeploymentActive(ctx) {
 		var finish func(error)
-		ctx, finish = BeginDeployment(ctx, "")
+		ctx, w, finish = BeginDeployment(ctx, "", w)
 		defer func() { finish(err) }()
+	} else {
+		w = deploymentWriter(ctx, w)
 	}
 
 	providerName := ProviderName(ctx, p)
-	LogProvider(ctx, p, "hosting", providerName, "init")
+	LogProvider(w, ctx, p, "hosting", providerName, "init")
 
 	if err := p.ValidateRoot(); err != nil {
-		LogProvider(ctx, p, "hosting", providerName, "failed")
+		LogProvider(w, ctx, p, "hosting", providerName, "failed")
 		return err
 	}
 	if err := mode.Validate(); err != nil {
-		LogProvider(ctx, p, "hosting", providerName, "failed")
+		LogProvider(w, ctx, p, "hosting", providerName, "failed")
 		return err
 	}
-	p.logSecrets(ctx, runtime)
+	p.logSecrets(ctx, runtime, w)
 	if err := p.engine.Ready(ctx, runtime, p); err != nil {
-		LogProvider(ctx, p, "hosting", providerName, "failed")
+		LogProvider(w, ctx, p, "hosting", providerName, "failed")
 		return err
 	}
 
 	files, err := walk(root)
 	if err != nil {
-		LogProvider(ctx, p, "hosting", providerName, "failed")
+		LogProvider(w, ctx, p, "hosting", providerName, "failed")
 		return err
 	}
-	files, err = p.deploymentFiles(ctx, files)
+	files, err = p.deploymentFiles(ctx, w, files)
 	if err != nil {
-		LogProvider(ctx, p, "hosting", providerName, "failed")
+		LogProvider(w, ctx, p, "hosting", providerName, "failed")
 		return err
 	}
-	LogProvider(ctx, p, "hosting", providerName, "ready")
+	LogProvider(w, ctx, p, "hosting", providerName, "ready")
 
-	if err := p.engine.Deploy(ctx, runtime, p, root, files, mode); err != nil {
-		LogProvider(ctx, p, "hosting", providerName, "failed")
+	if err := p.engine.Deploy(ctx, runtime, p, root, files, mode, w); err != nil {
+		LogProvider(w, ctx, p, "hosting", providerName, "failed")
 		return err
 	}
 	return nil
@@ -272,7 +280,7 @@ func (p *Provider) providerName(name string) string {
 	return p.DisplayName()
 }
 
-func (p *Provider) logSecrets(ctx context.Context, runtime *session.Session) {
+func (p *Provider) logSecrets(ctx context.Context, runtime *session.Session, w io.Writer) {
 	for _, secret := range p.Secrets {
 		state := "found"
 		_, err := runtime.ResolveSecret(ctx, secret.LookupKey())
@@ -285,7 +293,7 @@ func (p *Provider) logSecrets(ctx context.Context, runtime *session.Session) {
 		default:
 			state = "error"
 		}
-		LogSecret(ctx, p, secret.Name, state)
+		LogSecret(w, ctx, p, secret.Name, state)
 	}
 }
 

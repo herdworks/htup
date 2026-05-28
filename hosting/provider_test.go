@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func (e *fakeEngine) Ready(ctx context.Context, session *session.Session, provid
 	return nil
 }
 
-func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode) error {
+func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode, w io.Writer) error {
 	return nil
 }
 
@@ -38,7 +39,7 @@ func (e *failingEngine) Ready(ctx context.Context, session *session.Session, pro
 	return nil
 }
 
-func (e *failingEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode) error {
+func (e *failingEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode, w io.Writer) error {
 	return errors.New("deploy failed")
 }
 
@@ -52,7 +53,7 @@ func (e *failingReadyEngine) Ready(ctx context.Context, session *session.Session
 	return errors.New("ready failed")
 }
 
-func (e *failingReadyEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode) error {
+func (e *failingReadyEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode, w io.Writer) error {
 	return nil
 }
 
@@ -342,8 +343,6 @@ func TestProvider_DestinationURL(t *testing.T) {
 
 func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
 	RegisterEngine("log-test", &fakeEngine{})
 
@@ -366,7 +365,7 @@ func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 		},
 	}
 
-	if err := provider.DeployNamed(context.Background(), "assets", root, runtime, DeploymentModeReplacement); err != nil {
+	if err := provider.DeployNamed(context.Background(), "assets", root, runtime, DeploymentModeReplacement, &buf); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -387,8 +386,6 @@ func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 
 func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
 	RegisterEngine("fail-test", &failingEngine{})
 
@@ -399,7 +396,7 @@ func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
 		Kind:     "fail-test",
 		Endpoint: "https://example.com",
 	}
-	err := provider.DeployNamed(context.Background(), "assets", root, nil, DeploymentModeReplacement)
+	err := provider.DeployNamed(context.Background(), "assets", root, nil, DeploymentModeReplacement, &buf)
 	if err == nil {
 		t.Fatal("Deploy() error = nil, want error")
 	}

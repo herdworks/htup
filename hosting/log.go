@@ -22,26 +22,34 @@ type deployLogState struct {
 	path        string
 }
 
-var deployLogOutput = struct {
-	sync.Mutex
-	w io.Writer
-}{
-	w: os.Stdout,
+type synchronizedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
 }
 
-// BeginDeployment writes the deployment start line and returns a completion
-// callback. Nested deploy calls share the active environment without writing
-// duplicate start or end lines.
-func BeginDeployment(ctx context.Context, environment string) (context.Context, func(error)) {
+func (w *synchronizedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.w.Write(p)
+}
+
+// BeginDeployment writes the deployment start line and returns the final log
+// writer plus a completion callback. Nested deploy calls share the active
+// environment without writing duplicate start or end lines.
+func BeginDeployment(ctx context.Context, environment string, w io.Writer) (context.Context, io.Writer, func(error)) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if w == nil {
+		w = os.Stdout
+	}
 	state, _ := deployLogStateFrom(ctx)
 	if state != nil && state.active {
-		return ctx, func(error) {}
+		return ctx, deploymentWriter(ctx, w), func(error) {}
 	}
 
-	w, file, path := newDeploymentLogWriter(ctx)
+	w, file, path := newDeploymentLogWriter(ctx, w)
+	w = &synchronizedWriter{w: w}
 	ctx = context.WithValue(ctx, deployLogContextKey{}, &deployLogState{
 		environment: environment,
 		active:      true,
@@ -49,15 +57,15 @@ func BeginDeployment(ctx context.Context, environment string) (context.Context, 
 		file:        file,
 		path:        path,
 	})
-	logDeploymentState(ctx, environment, "starting")
+	logDeploymentState(w, environment, "starting")
 
-	return ctx, func(err error) {
+	return ctx, w, func(err error) {
 		if err == nil {
-			logDeploymentState(ctx, environment, "completed")
+			logDeploymentState(w, environment, "completed")
 			closeDeploymentLogFile(file)
 			return
 		}
-		logDeploymentState(ctx, environment, "failed")
+		logDeploymentState(w, environment, "failed")
 		closeDeploymentLogFile(file)
 	}
 }
@@ -80,33 +88,39 @@ func WithDeploymentRoot(ctx context.Context, root string) context.Context {
 }
 
 // LogProvider writes one provider-scoped line.
-func LogProvider(ctx context.Context, provider *Provider, resource, name, state string) {
+func LogProvider(w io.Writer, ctx context.Context, provider *Provider, resource, name, state string) {
 	if !deployLogActive(ctx) {
 		return
 	}
-	logDeployf(ctx, "%s %s %q %s\n", providerLogPrefix(ctx, provider), resource, name, state)
+	if w == nil {
+		w = os.Stdout
+	}
+	fmt.Fprintf(deploymentWriter(ctx, w), "%s %s %q %s\n", providerLogPrefix(ctx, provider), resource, name, state)
 }
 
 // LogSecret writes one provider-scoped secret resolution line. It logs only the
 // configured secret name, never the secret value.
-func LogSecret(ctx context.Context, provider *Provider, name, state string) {
-	LogProvider(ctx, provider, "secret", name, state)
+func LogSecret(w io.Writer, ctx context.Context, provider *Provider, name, state string) {
+	LogProvider(w, ctx, provider, "secret", name, state)
 }
 
 // LogFile writes one provider-scoped source file decision line.
-func LogFile(ctx context.Context, provider *Provider, file *File, state string) {
+func LogFile(w io.Writer, ctx context.Context, provider *Provider, file *File, state string) {
 	if file == nil {
 		return
 	}
-	LogProvider(ctx, provider, "file", file.RelPath(), state)
+	LogProvider(w, ctx, provider, "file", file.RelPath(), state)
 }
 
 // LogResource writes one provider-scoped destination resource line.
-func LogResource(ctx context.Context, provider *Provider, destination, mimetype, state string) {
+func LogResource(w io.Writer, ctx context.Context, provider *Provider, destination, mimetype, state string) {
 	if !deployLogActive(ctx) {
 		return
 	}
-	logDeployf(ctx, "%s resource %q type %q %s\n", providerLogPrefix(ctx, provider), destination, mimetype, state)
+	if w == nil {
+		w = os.Stdout
+	}
+	fmt.Fprintf(deploymentWriter(ctx, w), "%s resource %q type %q %s\n", providerLogPrefix(ctx, provider), destination, mimetype, state)
 }
 
 // WithProviderName attaches the selected provider name to ctx for provider logs.
@@ -154,30 +168,23 @@ func deployLogActive(ctx context.Context) bool {
 	return ok && state.active
 }
 
-func logDeployf(ctx context.Context, format string, args ...any) {
-	deployLogOutput.Lock()
-	defer deployLogOutput.Unlock()
-	fmt.Fprintf(deployLogWriter(ctx), format, args...)
-}
-
-func logDeploymentState(ctx context.Context, environment, state string) {
+func logDeploymentState(w io.Writer, environment, state string) {
 	if environment == "" {
-		logDeployf(ctx, "[deployment] %s\n", state)
+		fmt.Fprintf(w, "[deployment] %s\n", state)
 		return
 	}
-	logDeployf(ctx, "[deployment] environment %q %s\n", environment, state)
+	fmt.Fprintf(w, "[deployment] environment %q %s\n", environment, state)
 }
 
-func deployLogWriter(ctx context.Context) io.Writer {
+func deploymentWriter(ctx context.Context, fallback io.Writer) io.Writer {
 	state, ok := deployLogStateFrom(ctx)
 	if ok && state.w != nil {
 		return state.w
 	}
-	return deployLogOutput.w
+	return fallback
 }
 
-func newDeploymentLogWriter(ctx context.Context) (io.Writer, *os.File, string) {
-	base := deployLogOutput.w
+func newDeploymentLogWriter(ctx context.Context, base io.Writer) (io.Writer, *os.File, string) {
 	root, _ := ctx.Value(deploymentRootContextKey{}).(string)
 	if root == "" {
 		return base, nil, ""

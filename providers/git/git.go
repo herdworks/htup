@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -198,7 +199,7 @@ func validateSettings(provider *hosting.Provider) (*settings, error) {
 // deployment mode, stage, commit, optionally tag, push, and optionally prune tags.
 // Replacement mode clears publish_dir first; overlay mode writes and stages only
 // the provided files.
-func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File, mode hosting.DeploymentMode) error {
+func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File, mode hosting.DeploymentMode, w io.Writer) error {
 	if err := mode.Validate(); err != nil {
 		return err
 	}
@@ -222,41 +223,41 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 
 	remoteBranch := "origin/" + cfg.Branch
 	remoteResource := cfg.RemoteURL + "#" + cfg.Branch
-	hosting.LogProvider(ctx, provider, "open", remoteResource, "starting")
+	hosting.LogProvider(w, ctx, provider, "open", remoteResource, "starting")
 	repo, wt, firstDeploy, err := openOrClone(ctx, workdir, cfg.RemoteURL, cfg.Branch, auth)
 	if err != nil {
-		hosting.LogProvider(ctx, provider, "open", remoteResource, "failed")
+		hosting.LogProvider(w, ctx, provider, "open", remoteResource, "failed")
 		return fmt.Errorf("git: open repo: %w", err)
 	}
-	hosting.LogProvider(ctx, provider, "open", remoteResource, "completed")
+	hosting.LogProvider(w, ctx, provider, "open", remoteResource, "completed")
 	if firstDeploy && mode == hosting.DeploymentModeOverlay {
 		_ = os.RemoveAll(workdir)
 		return overlayMissingBranchError(cfg.Branch)
 	}
 
 	if !firstDeploy {
-		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "starting")
+		hosting.LogProvider(w, ctx, provider, "fetch", remoteBranch, "starting")
 		if err := fetchOrigin(ctx, repo, auth); err != nil {
-			hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "failed")
+			hosting.LogProvider(w, ctx, provider, "fetch", remoteBranch, "failed")
 			if mode == hosting.DeploymentModeOverlay && isBranchMissing(err) {
 				return overlayMissingBranchError(cfg.Branch)
 			}
 			return fmt.Errorf("git: fetch origin: %w", err)
 		}
-		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "completed")
+		hosting.LogProvider(w, ctx, provider, "fetch", remoteBranch, "completed")
 
-		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "starting")
+		hosting.LogProvider(w, ctx, provider, "reset", remoteBranch, "starting")
 		if err := resetToOrigin(repo, wt, cfg.Branch); err != nil {
-			hosting.LogProvider(ctx, provider, "reset", remoteBranch, "failed")
+			hosting.LogProvider(w, ctx, provider, "reset", remoteBranch, "failed")
 			if mode == hosting.DeploymentModeOverlay && isBranchMissing(err) {
 				return overlayMissingBranchError(cfg.Branch)
 			}
 			return fmt.Errorf("git: reset to origin: %w", err)
 		}
-		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "completed")
+		hosting.LogProvider(w, ctx, provider, "reset", remoteBranch, "completed")
 	} else {
-		hosting.LogProvider(ctx, provider, "fetch", remoteBranch, "skipped")
-		hosting.LogProvider(ctx, provider, "reset", remoteBranch, "skipped")
+		hosting.LogProvider(w, ctx, provider, "fetch", remoteBranch, "skipped")
+		hosting.LogProvider(w, ctx, provider, "reset", remoteBranch, "skipped")
 	}
 
 	switch mode {
@@ -282,37 +283,37 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 	if err != nil {
 		return fmt.Errorf("git: status: %w", err)
 	}
-	if err := logResourceChanges(ctx, provider, cfg.PublishDir, files, status); err != nil {
+	if err := logResourceChanges(ctx, provider, cfg.PublishDir, files, status, w); err != nil {
 		return err
 	}
 	if status.IsClean() {
-		hosting.LogProvider(ctx, provider, "commit", cfg.Branch, "skipped")
-		hosting.LogProvider(ctx, provider, "push", remoteBranch, "skipped")
+		hosting.LogProvider(w, ctx, provider, "commit", cfg.Branch, "skipped")
+		hosting.LogProvider(w, ctx, provider, "push", remoteBranch, "skipped")
 		return nil
 	}
 
 	buildID := buildIDFrom(ctx)
 	sig := cfg.signature()
-	hosting.LogProvider(ctx, provider, "commit", cfg.Branch, "starting")
+	hosting.LogProvider(w, ctx, provider, "commit", cfg.Branch, "starting")
 	commitHash, err := wt.Commit(cfg.commitMessage(buildID), &git.CommitOptions{Author: sig, Committer: sig})
 	if err != nil {
-		hosting.LogProvider(ctx, provider, "commit", cfg.Branch, "failed")
+		hosting.LogProvider(w, ctx, provider, "commit", cfg.Branch, "failed")
 		return fmt.Errorf("git: commit: %w", err)
 	}
-	hosting.LogProvider(ctx, provider, "commit", shortHash(commitHash.String()), "completed")
+	hosting.LogProvider(w, ctx, provider, "commit", shortHash(commitHash.String()), "completed")
 
 	var tagRef string
 	if cfg.TagEnabled {
 		tagRef = cfg.TagPrefix + buildID
-		hosting.LogProvider(ctx, provider, "tag", tagRef, "starting")
+		hosting.LogProvider(w, ctx, provider, "tag", tagRef, "starting")
 		if _, err := repo.CreateTag(tagRef, commitHash, &git.CreateTagOptions{
 			Tagger:  sig,
 			Message: "hyperproviders deploy " + buildID,
 		}); err != nil {
-			hosting.LogProvider(ctx, provider, "tag", tagRef, "failed")
+			hosting.LogProvider(w, ctx, provider, "tag", tagRef, "failed")
 			return fmt.Errorf("git: tag %s: %w", tagRef, err)
 		}
-		hosting.LogProvider(ctx, provider, "tag", tagRef, "completed")
+		hosting.LogProvider(w, ctx, provider, "tag", tagRef, "completed")
 	}
 
 	pushOpts := &git.PushOptions{
@@ -323,25 +324,25 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 	if tagRef != "" {
 		pushOpts.RefSpecs = append(pushOpts.RefSpecs, gogitconfig.RefSpec(fmt.Sprintf("refs/tags/%s:refs/tags/%s", tagRef, tagRef)))
 	}
-	hosting.LogProvider(ctx, provider, "push", remoteBranch, "starting")
+	hosting.LogProvider(w, ctx, provider, "push", remoteBranch, "starting")
 	if err := repo.PushContext(ctx, pushOpts); err != nil {
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
-			hosting.LogProvider(ctx, provider, "push", remoteBranch, "skipped")
+			hosting.LogProvider(w, ctx, provider, "push", remoteBranch, "skipped")
 		} else {
-			hosting.LogProvider(ctx, provider, "push", remoteBranch, "failed")
+			hosting.LogProvider(w, ctx, provider, "push", remoteBranch, "failed")
 			return fmt.Errorf("git: push: %w", err)
 		}
 	} else {
-		hosting.LogProvider(ctx, provider, "push", remoteBranch, "completed")
+		hosting.LogProvider(w, ctx, provider, "push", remoteBranch, "completed")
 	}
 
 	if cfg.TagEnabled && cfg.TagRetainLast > 0 {
-		hosting.LogProvider(ctx, provider, "prune", cfg.TagPrefix, "starting")
+		hosting.LogProvider(w, ctx, provider, "prune", cfg.TagPrefix, "starting")
 		if err := cfg.pruneTags(ctx, repo, auth); err != nil {
-			hosting.LogProvider(ctx, provider, "prune", cfg.TagPrefix, "failed")
+			hosting.LogProvider(w, ctx, provider, "prune", cfg.TagPrefix, "failed")
 			return fmt.Errorf("git: prune tags: %w", err)
 		}
-		hosting.LogProvider(ctx, provider, "prune", cfg.TagPrefix, "completed")
+		hosting.LogProvider(w, ctx, provider, "prune", cfg.TagPrefix, "completed")
 	}
 
 	return nil
@@ -380,7 +381,7 @@ func (cfg *settings) commitMessage(buildID string) string {
 	return fmt.Sprintf("deploy %s", buildID)
 }
 
-func logResourceChanges(ctx context.Context, provider *hosting.Provider, publishDir string, files []*hosting.File, status git.Status) error {
+func logResourceChanges(ctx context.Context, provider *hosting.Provider, publishDir string, files []*hosting.File, status git.Status, w io.Writer) error {
 	included := make(map[string]*hosting.File, len(files))
 	for _, file := range files {
 		included[repoPath(publishDir, file.RelPath())] = file
@@ -392,7 +393,7 @@ func logResourceChanges(ctx context.Context, provider *hosting.Provider, publish
 			return fmt.Errorf("git: mimetype %s: %w", file.RelPath(), err)
 		}
 		repoRel := repoPath(publishDir, file.RelPath())
-		hosting.LogResource(ctx, provider, provider.DestinationURL(file.RelPath()), mimetype, gitResourceAction(status[repoRel]))
+		hosting.LogResource(w, ctx, provider, provider.DestinationURL(file.RelPath()), mimetype, gitResourceAction(status[repoRel]))
 	}
 
 	var deleted []string
@@ -410,7 +411,7 @@ func logResourceChanges(ctx context.Context, provider *hosting.Provider, publish
 	}
 	sort.Strings(deleted)
 	for _, rel := range deleted {
-		hosting.LogResource(ctx, provider, provider.DestinationURL(rel), hosting.MimetypeForPath(rel), "delete")
+		hosting.LogResource(w, ctx, provider, provider.DestinationURL(rel), hosting.MimetypeForPath(rel), "delete")
 	}
 	return nil
 }

@@ -3,7 +3,6 @@ package hosting
 import (
 	"bytes"
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,10 +11,8 @@ import (
 
 func TestBeginDeployment_UsesEnvironmentName(t *testing.T) {
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
-	_, finish := BeginDeployment(context.Background(), "production")
+	_, _, finish := BeginDeployment(context.Background(), "production", &buf)
 	finish(nil)
 
 	want := "[deployment] environment \"production\" starting\n[deployment] environment \"production\" completed\n"
@@ -26,10 +23,8 @@ func TestBeginDeployment_UsesEnvironmentName(t *testing.T) {
 
 func TestBeginDeployment_WithoutEnvironmentName(t *testing.T) {
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
-	_, finish := BeginDeployment(context.Background(), "")
+	_, _, finish := BeginDeployment(context.Background(), "", &buf)
 	finish(nil)
 
 	want := "[deployment] starting\n[deployment] completed\n"
@@ -40,11 +35,9 @@ func TestBeginDeployment_WithoutEnvironmentName(t *testing.T) {
 
 func TestBeginDeployment_NestedDeployDoesNotDuplicateStartOrComplete(t *testing.T) {
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
-	ctx, finish := BeginDeployment(context.Background(), "production")
-	_, nestedFinish := BeginDeployment(ctx, "production")
+	ctx, w, finish := BeginDeployment(context.Background(), "production", &buf)
+	_, _, nestedFinish := BeginDeployment(ctx, "production", w)
 	nestedFinish(nil)
 	finish(nil)
 
@@ -59,10 +52,8 @@ func TestBeginDeployment_NestedDeployDoesNotDuplicateStartOrComplete(t *testing.
 
 func TestBeginDeployment_LogsFailedAfterError(t *testing.T) {
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
-	_, finish := BeginDeployment(context.Background(), "production")
+	_, _, finish := BeginDeployment(context.Background(), "production", &buf)
 	finish(context.Canceled)
 
 	got := buf.String()
@@ -74,12 +65,10 @@ func TestBeginDeployment_LogsFailedAfterError(t *testing.T) {
 func TestBeginDeployment_WritesGeneratedLogFile(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
 	ctx := WithDeploymentRoot(context.Background(), root)
-	ctx, finish := BeginDeployment(ctx, "production")
-	LogProvider(ctx, &Provider{Kind: "s3"}, "hosting", "assets", "ready")
+	ctx, w, finish := BeginDeployment(ctx, "production", &buf)
+	LogProvider(w, ctx, &Provider{Kind: "s3"}, "hosting", "assets", "ready")
 	finish(nil)
 
 	entries, err := os.ReadDir(filepath.Join(root, ProviderWorkspaceDir, "logs"))
@@ -100,17 +89,15 @@ func TestBeginDeployment_WritesGeneratedLogFile(t *testing.T) {
 
 func TestProviderLogsQuoteValues(t *testing.T) {
 	var buf bytes.Buffer
-	restore := setDeployLogOutput(&buf)
-	defer restore()
 
 	file := mkFile(t, t.TempDir(), "blog/index.html")
 	provider := &Provider{Kind: "s3"}
-	ctx, finish := BeginDeployment(context.Background(), "production")
+	ctx, w, finish := BeginDeployment(context.Background(), "production", &buf)
 	ctx = WithProviderName(ctx, "assets")
-	LogProvider(ctx, provider, "hosting", "assets", "ready")
-	LogSecret(ctx, provider, "access_key_id", "found")
-	LogFile(ctx, provider, file, "included")
-	LogResource(ctx, provider, "https://example.com/blog/index.html", "text/html", "completed")
+	LogProvider(w, ctx, provider, "hosting", "assets", "ready")
+	LogSecret(w, ctx, provider, "access_key_id", "found")
+	LogFile(w, ctx, provider, file, "included")
+	LogResource(w, ctx, provider, "https://example.com/blog/index.html", "text/html", "completed")
 	finish(nil)
 
 	want := "[deployment] environment \"production\" starting\n" +
@@ -121,18 +108,5 @@ func TestProviderLogsQuoteValues(t *testing.T) {
 		"[deployment] environment \"production\" completed\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("log output = %q, want %q", got, want)
-	}
-}
-
-func setDeployLogOutput(w io.Writer) func() {
-	deployLogOutput.Lock()
-	previous := deployLogOutput.w
-	deployLogOutput.w = w
-	deployLogOutput.Unlock()
-
-	return func() {
-		deployLogOutput.Lock()
-		deployLogOutput.w = previous
-		deployLogOutput.Unlock()
 	}
 }

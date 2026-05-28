@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"sync"
 
 	"github.com/herdworks/hyperproviders-go/hosting"
@@ -26,7 +28,11 @@ const (
 // Deploy deploys every provider in the map concurrently using mode. Each
 // provider receives the deployment root and owns its file discovery/filtering.
 // Errors from individual providers are aggregated with errors.Join.
-func (providers HostingProviders) Deploy(ctx context.Context, root string, session *Session, mode DeploymentMode) (err error) {
+func (providers HostingProviders) Deploy(ctx context.Context, root string, session *Session, mode DeploymentMode, w io.Writer) (err error) {
+	if w == nil {
+		w = os.Stdout
+	}
+
 	if err := providers.Validate(); err != nil {
 		return err
 	}
@@ -36,7 +42,7 @@ func (providers HostingProviders) Deploy(ctx context.Context, root string, sessi
 	ctx = hosting.WithDeploymentRoot(ctx, root)
 	if !hosting.DeploymentActive(ctx) {
 		var finish func(error)
-		ctx, finish = hosting.BeginDeployment(ctx, "")
+		ctx, w, finish = hosting.BeginDeployment(ctx, "", w)
 		defer func() { finish(err) }()
 	}
 
@@ -47,7 +53,7 @@ func (providers HostingProviders) Deploy(ctx context.Context, root string, sessi
 		wg.Add(1)
 		go func(name string, provider *HostingProvider) {
 			defer wg.Done()
-			if err := provider.DeployNamed(ctx, name, root, session, mode); err != nil {
+			if err := provider.DeployNamed(ctx, name, root, session, mode, w); err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("provider %q: %w", name, err))
 				mu.Unlock()
@@ -153,12 +159,12 @@ func (environment HostingEnvironment) Select(providers HostingProviders) (Hostin
 }
 
 // Deploy deploys the environment's provider names against providers using mode.
-func (environment HostingEnvironment) Deploy(ctx context.Context, providers HostingProviders, root string, session *Session, mode DeploymentMode) error {
+func (environment HostingEnvironment) Deploy(ctx context.Context, providers HostingProviders, root string, session *Session, mode DeploymentMode, w io.Writer) error {
 	selected, err := environment.Select(providers)
 	if err != nil {
 		return err
 	}
-	return selected.Deploy(ctx, root, session, mode)
+	return selected.Deploy(ctx, root, session, mode, w)
 }
 
 // Ready runs local runtime-aware readiness checks for the environment's
