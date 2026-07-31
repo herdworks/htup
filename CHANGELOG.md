@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.24.0 (2026-07-31)
+
 * Added declarative `Deployment` planning and execution. `Prepare` loads a build root's `.deployment.json`, resolves ignore and enqueue rules, materializes preconditions, and exposes read-only `Instructions`, `Plan`, and `Status` snapshots; `Execute` checks all selected providers before applying sequential conditional operations and concurrent ordinary operations.
 * Added `.deployment.json` declarations for exact-byte/create-only preconditions, build-root ignore rules, and post-bulk enqueue ordering. The `.deployment/` directory is now reserved for provider and generator workspace state and is never deployed.
 * Added provider-native `DeploymentOperation` validation and execution, including S3 compare-and-swap preconditions and ordered enqueue uploads, plus Git base-tree precondition checks and one final commit/push.
