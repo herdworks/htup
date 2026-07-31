@@ -1,41 +1,48 @@
-// Package runtime implements a secrets.Provider backed by session-provided
-// secret values.
+// Package runtime implements a secrets provider backed by caller-supplied
+// runtime secret values.
 package runtime
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/herdworks/hyperproviders-go/secrets"
-	"github.com/herdworks/hyperproviders-go/session"
+	hyperproviders "github.com/herdworks/hyperproviders-go"
 )
 
-const Kind = session.RuntimeSecretProviderName
+const Kind = "runtime"
 
-// Provider resolves secrets from the active session's secret values.
-type Provider struct{}
+// Secrets are sensitive, caller-supplied values for one deployment or
+// readiness operation.
+type Secrets map[string]hyperproviders.SecretValue
 
-// New returns a runtime secret provider.
-func New() Provider {
-	return Provider{}
+// Provider resolves secret keys from the runtime values supplied at creation.
+type Provider struct {
+	secrets Secrets
 }
 
-// Name returns the provider name.
-func (Provider) Name() string {
-	return Kind
-}
-
-// Resolve returns key from values.
-func (Provider) Resolve(ctx context.Context, values secrets.Values, key string) (secrets.Value, error) {
-	if values == nil {
-		return nil, fmt.Errorf("%w: %s", secrets.ErrNotFound, key)
+// New returns a runtime secrets provider. It copies the supplied values so
+// callers cannot alter the provider's values after creating it.
+func New(secrets Secrets) *Provider {
+	runtimeSecrets := make(Secrets, len(secrets))
+	for key, value := range secrets {
+		runtimeSecrets[key] = hyperproviders.BytesSecret(value)
 	}
-	value, ok := values[key]
+	return &Provider{secrets: runtimeSecrets}
+}
+
+func (*Provider) Name() string { return Kind }
+
+// Resolve returns the caller-supplied value for key.
+func (p *Provider) Resolve(ctx context.Context, key string) (hyperproviders.SecretValue, error) {
+	if p == nil {
+		return nil, fmt.Errorf("%w: %s", hyperproviders.ErrSecretNotFound, key)
+	}
+	value, ok := p.secrets[key]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", secrets.ErrNotFound, key)
+		return nil, fmt.Errorf("%w: %s", hyperproviders.ErrSecretNotFound, key)
 	}
 	if value.Empty() {
-		return nil, fmt.Errorf("%w: %s", secrets.ErrEmpty, key)
+		return nil, fmt.Errorf("%w: %s", hyperproviders.ErrSecretEmpty, key)
 	}
-	return value, nil
+	return hyperproviders.BytesSecret(value), nil
 }

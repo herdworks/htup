@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 
@@ -17,7 +18,7 @@ func runDeploy(ctx context.Context, args []string) error {
 		configPath = fs.String("config", "", "path to JSON or YAML config file")
 		envName    = fs.String("environment", "", "environment name from config")
 		source     = fs.String("source", "", "source directory to deploy")
-		modeName   = fs.String("mode", "", "deployment mode: replacement or overlay")
+		modeName   = fs.String("mode", "", "deployment kind: complete or incremental")
 		dryRun     = fs.Bool("dry-run", false, "list files that would be deployed without uploading")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -27,8 +28,8 @@ func runDeploy(ctx context.Context, args []string) error {
 		fs.Usage()
 		return fmt.Errorf("deploy: --config, --environment, --source, and --mode are required")
 	}
-	mode := hp.DeploymentMode(*modeName)
-	if err := mode.Validate(); err != nil {
+	kind := hp.DeploymentKind(*modeName)
+	if err := kind.Validate(); err != nil {
 		return fmt.Errorf("deploy: %w", err)
 	}
 
@@ -40,21 +41,52 @@ func runDeploy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range *env {
-		p := cfg.Providers[name]
-		if p == nil {
-			return fmt.Errorf("validate provider %q: provider not found", name)
-		}
-		if err := p.Validate(); err != nil {
-			return fmt.Errorf("validate provider %q: %w", name, err)
-		}
+	selected, err := env.Select(cfg.Providers)
+	if err != nil {
+		return err
 	}
+	deployment := &hp.Deployment{Providers: selected, Path: *source, Kind: kind}
 
 	if *dryRun {
-		return printDryRun(os.Stdout, cfg.Providers, env, *source)
+		prepareCtx, w, finish := hp.BeginDeployment(hp.WithDeploymentRoot(ctx, *source), *envName, os.Stdout)
+		err := deployment.Prepare(prepareCtx, w)
+		finish(err)
+		if err == nil {
+			renderPlan(os.Stdout, selected, deployment.Plan())
+		}
+		return err
 	}
+	return deployment.Execute(ctx, SecretProviders(), nil)
+}
 
-	return env.Deploy(ctx, cfg.Providers, *source, Session(), mode, nil)
+func renderPlan(w io.Writer, providers hp.HostingProviders, plan hp.DeploymentPlan) {
+	for _, group := range []struct {
+		name       string
+		operations []hp.DeploymentOperation
+	}{
+		{name: "sequential", operations: plan.Sequential},
+		{name: "concurrent", operations: plan.Concurrent},
+	} {
+		for _, operation := range group.operations {
+			name := operation.HostingProvider.DisplayName()
+			for candidate, provider := range providers {
+				if provider == operation.HostingProvider {
+					name = candidate
+					break
+				}
+			}
+			fmt.Fprintf(w, "plan %s provider %q: %d preconditions, %d bulk, %d enqueued\n", group.name, name, len(operation.Preconditions), len(operation.Bulk), len(operation.Enqueued))
+			for _, precondition := range operation.Preconditions {
+				fmt.Fprintf(w, "  precondition %s\n", precondition.Target)
+			}
+			for _, file := range operation.Bulk {
+				fmt.Fprintf(w, "  bulk %s\n", file.RelPath())
+			}
+			for _, file := range operation.Enqueued {
+				fmt.Fprintf(w, "  enqueue %s\n", file.RelPath())
+			}
+		}
+	}
 }
 
 // runValidate implements `htdt validate`. Parses the config and runs
@@ -94,7 +126,7 @@ func runValidate(ctx context.Context, args []string) error {
 
 // runReady implements `htdt ready`. It parses config and runs runtime-aware
 // local readiness checks for each selected provider. Secrets are resolved from
-// OS environment variables via Session().
+// OS environment variables via SecretProviders().
 func runReady(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("ready", flag.ContinueOnError)
 	var (
@@ -121,7 +153,7 @@ func runReady(ctx context.Context, args []string) error {
 		envNames = []string{*envName}
 	}
 
-	session := Session()
+	secretProviders := SecretProviders()
 	for _, envName := range envNames {
 		env := cfg.Environments[envName]
 		if env == nil {
@@ -132,7 +164,7 @@ func runReady(ctx context.Context, args []string) error {
 			if p == nil {
 				return fmt.Errorf("environment %q provider %q: provider not found", envName, providerName)
 			}
-			if err := p.Ready(ctx, session); err != nil {
+			if err := p.Ready(ctx, secretProviders); err != nil {
 				return fmt.Errorf("environment %q provider %q: %w", envName, providerName, err)
 			}
 			fmt.Printf("ready  %s / %s (%s)\n", envName, providerName, p.Kind)
@@ -182,19 +214,4 @@ func sortedEnvNames(cfg *Config) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-func printDryRun(w *os.File, providers hp.HostingProviders, env *hp.HostingEnvironment, root string) error {
-	plan, err := env.Plan(providers, root)
-	if err != nil {
-		return err
-	}
-	for _, providerName := range *env {
-		p := providers[providerName]
-		fmt.Fprintf(w, "# provider %s (%s)\n", providerName, p.Kind)
-		for _, path := range plan[providerName] {
-			fmt.Fprintln(w, path)
-		}
-	}
-	return nil
 }

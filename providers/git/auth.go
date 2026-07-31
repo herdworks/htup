@@ -9,8 +9,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/herdworks/hyperproviders-go/secrets"
-	"github.com/herdworks/hyperproviders-go/session"
+	hosting "github.com/herdworks/hyperproviders-go"
 	stdssh "golang.org/x/crypto/ssh"
 )
 
@@ -24,38 +23,38 @@ const (
 // HTTPS URLs use BasicAuth with a "token" secret; SSH URLs use NewPublicKeys
 // with an "ssh_private_key" secret containing PEM bytes. Local file:// URLs
 // (used in tests) need no auth.
-func resolveAuth(ctx context.Context, runtime *session.Session, cfg *settings, secretSet secrets.Secrets) (transport.AuthMethod, error) {
+func resolveAuth(ctx context.Context, secretProviders hosting.SecretsProviders, cfg *settings, secretSet hosting.Secrets) (transport.AuthMethod, error) {
 	if strings.HasPrefix(cfg.RemoteURL, "file://") {
 		return nil, nil
 	}
 	if isHTTP(cfg.RemoteURL) {
-		return httpAuth(ctx, runtime, secretSet)
+		return httpAuth(ctx, secretProviders, secretSet)
 	}
-	return sshAuth(ctx, runtime, cfg, secretSet)
+	return sshAuth(ctx, secretProviders, cfg, secretSet)
 }
 
 func isHTTP(url string) bool {
 	return strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
 }
 
-func httpAuth(ctx context.Context, runtime *session.Session, secretSet secrets.Secrets) (transport.AuthMethod, error) {
+func httpAuth(ctx context.Context, secretProviders hosting.SecretsProviders, secretSet hosting.Secrets) (transport.AuthMethod, error) {
 	token, err := secretSet.Get(secretToken)
 	if err != nil {
 		return nil, err
 	}
-	value, err := runtime.ResolveSecret(ctx, token.LookupKey())
+	value, err := secretProviders.Resolve(ctx, token.LookupKey())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", secretToken, err)
 	}
 	return &githttp.BasicAuth{Username: "hyperproviders", Password: value.String()}, nil
 }
 
-func sshAuth(ctx context.Context, runtime *session.Session, cfg *settings, secretSet secrets.Secrets) (transport.AuthMethod, error) {
+func sshAuth(ctx context.Context, secretProviders hosting.SecretsProviders, cfg *settings, secretSet hosting.Secrets) (transport.AuthMethod, error) {
 	pk, err := secretSet.Get(secretSSHPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("ssh auth requires %q", secretSSHPrivateKey)
 	}
-	value, err := runtime.ResolveSecret(ctx, pk.LookupKey())
+	value, err := secretProviders.Resolve(ctx, pk.LookupKey())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", secretSSHPrivateKey, err)
 	}
@@ -63,7 +62,7 @@ func sshAuth(ctx context.Context, runtime *session.Session, cfg *settings, secre
 	passphrase := ""
 
 	if pp, err := secretSet.Get(secretSSHPassphrase); err == nil {
-		v, err := runtime.ResolveSecret(ctx, pp.LookupKey())
+		v, err := secretProviders.Resolve(ctx, pp.LookupKey())
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", secretSSHPassphrase, err)
 		}

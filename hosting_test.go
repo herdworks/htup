@@ -1,4 +1,4 @@
-package hosting
+package hyperproviders
 
 import (
 	"bytes"
@@ -8,53 +8,97 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/herdworks/hyperproviders-go/secrets"
-	"github.com/herdworks/hyperproviders-go/session"
 )
 
 type fakeEngine struct{}
 
-func (e *fakeEngine) Validate(provider *Provider) error {
+func deployProvider(ctx context.Context, provider *HostingProvider, root string, secretProviders SecretsProviders, kind DeploymentKind, w io.Writer) error {
+	return (&Deployment{Providers: HostingProviders{provider.DisplayName(): provider}, Path: root, Kind: kind}).Execute(ctx, secretProviders, w)
+}
+
+func (e *fakeEngine) Validate(provider *HostingProvider) error {
 	return nil
 }
 
-func (e *fakeEngine) Ready(ctx context.Context, session *session.Session, provider *Provider) error {
+func (e *fakeEngine) Ready(ctx context.Context, secretProviders SecretsProviders, provider *HostingProvider) error {
 	return nil
 }
 
-func (e *fakeEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode, w io.Writer) error {
+func (e *fakeEngine) ValidateOperation(provider *HostingProvider, operation DeploymentOperation) error {
+	if len(operation.Preconditions) > 0 {
+		return ErrDeploymentUnsupportedPrecondition
+	}
+	return nil
+}
+func (e *fakeEngine) PerformOperation(ctx context.Context, secretProviders SecretsProviders, operation DeploymentOperation, w io.Writer) error {
 	return nil
 }
 
 type failingEngine struct{}
 
-func (e *failingEngine) Validate(provider *Provider) error {
+func (e *failingEngine) Validate(provider *HostingProvider) error {
 	return nil
 }
 
-func (e *failingEngine) Ready(ctx context.Context, session *session.Session, provider *Provider) error {
+func (e *failingEngine) Ready(ctx context.Context, secretProviders SecretsProviders, provider *HostingProvider) error {
 	return nil
 }
 
-func (e *failingEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode, w io.Writer) error {
+func (e *failingEngine) ValidateOperation(provider *HostingProvider, operation DeploymentOperation) error {
+	return nil
+}
+func (e *failingEngine) PerformOperation(ctx context.Context, secretProviders SecretsProviders, operation DeploymentOperation, w io.Writer) error {
 	return errors.New("deploy failed")
 }
 
 type failingReadyEngine struct{}
 
-func (e *failingReadyEngine) Validate(provider *Provider) error {
+func (e *failingReadyEngine) Validate(provider *HostingProvider) error {
 	return nil
 }
 
-func (e *failingReadyEngine) Ready(ctx context.Context, session *session.Session, provider *Provider) error {
+func (e *failingReadyEngine) Ready(ctx context.Context, secretProviders SecretsProviders, provider *HostingProvider) error {
 	return errors.New("ready failed")
 }
 
-func (e *failingReadyEngine) Deploy(ctx context.Context, session *session.Session, provider *Provider, root string, files []*File, mode DeploymentMode, w io.Writer) error {
+func (e *failingReadyEngine) ValidateOperation(provider *HostingProvider, operation DeploymentOperation) error {
 	return nil
+}
+func (e *failingReadyEngine) PerformOperation(ctx context.Context, secretProviders SecretsProviders, operation DeploymentOperation, w io.Writer) error {
+	return nil
+}
+
+type orderedEngine struct {
+	preconditions []PreconditionFile
+	phases        [][]string
+}
+
+func (e *orderedEngine) Validate(provider *HostingProvider) error { return nil }
+
+func (e *orderedEngine) Ready(ctx context.Context, secretProviders SecretsProviders, provider *HostingProvider) error {
+	return nil
+}
+
+func (e *orderedEngine) ValidateOperation(provider *HostingProvider, operation DeploymentOperation) error {
+	return nil
+}
+func (e *orderedEngine) PerformOperation(ctx context.Context, secretProviders SecretsProviders, operation DeploymentOperation, w io.Writer) error {
+	e.preconditions = nil
+	for _, condition := range operation.Preconditions {
+		e.preconditions = append(e.preconditions, condition)
+	}
+	e.phases = append(e.phases, paths(operation.Bulk), paths(operation.Enqueued))
+	return nil
+}
+func paths(files []*File) []string {
+	out := make([]string, len(files))
+	for i, file := range files {
+		out[i] = file.RelPath()
+	}
+	return out
 }
 
 func mkFile(t *testing.T, root, rel string) *File {
@@ -122,6 +166,19 @@ func TestFilter_ExcludeTypes(t *testing.T) {
 	}
 }
 
+func TestFilter_TypeRulesUseBaseMIMEType(t *testing.T) {
+	root := t.TempDir()
+	html := mkFile(t, root, "page.html")
+	filter := &Filter{Include: FilterRules{Types: []string{`^text/html$`}}}
+	ok, err := filter.Match(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("base MIME type rule should match text/html with charset parameter")
+	}
+}
+
 func TestFilter_IncludeAndExclude(t *testing.T) {
 	root := t.TempDir()
 	a := mkFile(t, root, "docs/a.html")
@@ -162,7 +219,7 @@ func TestFilter_InvalidRegex(t *testing.T) {
 func TestProvider_DisplayNameAndValidate(t *testing.T) {
 	RegisterEngine("test", &fakeEngine{})
 
-	p := &Provider{
+	p := &HostingProvider{
 		Kind:     "test",
 		Endpoint: "https://example.com",
 		Config:   map[string]any{},
@@ -171,8 +228,8 @@ func TestProvider_DisplayNameAndValidate(t *testing.T) {
 		t.Errorf("DisplayName = %q, want test", p.DisplayName())
 	}
 
-	empty := &Provider{}
-	if !errors.Is(empty.ValidateRoot(), ErrMissingKind) {
+	empty := &HostingProvider{}
+	if !errors.Is(empty.ValidateRoot(), ErrHostingProviderMissingKind) {
 		t.Error("ValidateRoot should error when provider kind is empty")
 	}
 	if err := p.ValidateRoot(); err != nil {
@@ -183,10 +240,52 @@ func TestProvider_DisplayNameAndValidate(t *testing.T) {
 	}
 }
 
+func TestProvider_DeploymentInstructionsPreconditionAndEnqueue(t *testing.T) {
+	engine := &orderedEngine{}
+	RegisterEngine("ordered-test", engine)
+	root := t.TempDir()
+	for _, rel := range []string{"ordinary.txt", "queued/first.json", "queued/final.json", ".deployment/pending.json"} {
+		mkFile(t, root, rel)
+	}
+	instructions := []byte(`{
+  "preconditions":[{"target":".hypersync/revision.json","contents":".deployment/pending.json"}],
+  "enqueue":["queued/*.json","queued/final.json"]
+}`)
+	if err := os.WriteFile(filepath.Join(root, DeploymentInstructionsFile), instructions, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := &HostingProvider{Kind: "ordered-test", Endpoint: "https://example.test"}
+	if err := deployProvider(context.Background(), p, root, nil, IncrementalDeployment, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.preconditions) != 1 || engine.preconditions[0].Target != ".hypersync/revision.json" {
+		t.Fatalf("preconditions = %#v", engine.preconditions)
+	}
+	want := [][]string{{"ordinary.txt"}, {"queued/final.json", "queued/first.json"}}
+	if !reflect.DeepEqual(engine.phases, want) {
+		t.Fatalf("phases = %#v, want %#v", engine.phases, want)
+	}
+}
+
+func TestProvider_UnsupportedPreconditionStopsUploads(t *testing.T) {
+	RegisterEngine("plain-test", &fakeEngine{})
+	root := t.TempDir()
+	mkFile(t, root, "ordinary.txt")
+	mkFile(t, root, ".deployment/pending.json")
+	if err := os.WriteFile(filepath.Join(root, DeploymentInstructionsFile), []byte(`{"preconditions":[{"target":"revision.json","contents":".deployment/pending.json"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := &HostingProvider{Kind: "plain-test", Endpoint: "https://example.test"}
+	err := deployProvider(context.Background(), p, root, nil, IncrementalDeployment, io.Discard)
+	if !errors.Is(err, ErrDeploymentUnsupportedPrecondition) {
+		t.Fatalf("Deploy error = %v, want unsupported precondition", err)
+	}
+}
+
 func TestProvider_ValidateRoot(t *testing.T) {
 	RegisterEngine("root-test", &fakeEngine{})
 
-	valid := &Provider{
+	valid := &HostingProvider{
 		Kind:     "root-test",
 		Endpoint: "https://example.com",
 		Config:   map[string]any{},
@@ -197,36 +296,36 @@ func TestProvider_ValidateRoot(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		p    *Provider
+		p    *HostingProvider
 	}{
-		{name: "missing kind", p: &Provider{Endpoint: "https://example.com", Config: map[string]any{}}},
-		{name: "missing endpoint", p: &Provider{Kind: "root-test", Config: map[string]any{}}},
-		{name: "unknown kind", p: &Provider{Kind: "unknown", Endpoint: "https://example.com", Config: map[string]any{}}},
+		{name: "missing kind", p: &HostingProvider{Endpoint: "https://example.com", Config: map[string]any{}}},
+		{name: "missing endpoint", p: &HostingProvider{Kind: "root-test", Config: map[string]any{}}},
+		{name: "unknown kind", p: &HostingProvider{Kind: "unknown", Endpoint: "https://example.com", Config: map[string]any{}}},
 	} {
 		if err := tc.p.ValidateRoot(); err == nil {
 			t.Errorf("%s: expected error", tc.name)
 		}
 	}
 
-	noConfig := &Provider{Kind: "root-test", Endpoint: "https://example.com"}
+	noConfig := &HostingProvider{Kind: "root-test", Endpoint: "https://example.com"}
 	if err := noConfig.ValidateRoot(); err != nil {
 		t.Errorf("ValidateRoot without config: %v", err)
 	}
 
-	missingSecretKey := &Provider{
+	missingSecretKey := &HostingProvider{
 		Kind:     "root-test",
 		Endpoint: "https://example.com",
-		Secrets:  secrets.Secrets{{Name: "token"}},
+		Secrets:  Secrets{{Name: "token"}},
 	}
-	if err := missingSecretKey.ValidateRoot(); !errors.Is(err, secrets.ErrMissingKey) {
-		t.Fatalf("ValidateRoot missing secret key err = %v, want ErrMissingKey", err)
+	if err := missingSecretKey.ValidateRoot(); !errors.Is(err, ErrSecretMissingKey) {
+		t.Fatalf("ValidateRoot missing secret key err = %v, want ErrSecretMissingKey", err)
 	}
 }
 
 func TestProvider_ReadyDelegatesEngine(t *testing.T) {
 	RegisterEngine("ready-fails", &failingReadyEngine{})
 
-	provider := &Provider{
+	provider := &HostingProvider{
 		Kind:     "ready-fails",
 		Endpoint: "https://example.com",
 	}
@@ -236,25 +335,8 @@ func TestProvider_ReadyDelegatesEngine(t *testing.T) {
 	}
 }
 
-func TestProvider_DeploymentFilesValidatesRoot(t *testing.T) {
-	root := t.TempDir()
-	mkFile(t, root, "index.html")
-
-	provider := &Provider{
-		Kind:     "unknown-deployment-files",
-		Endpoint: "https://example.com",
-	}
-	err := func() error {
-		_, err := provider.DeploymentFiles(root)
-		return err
-	}()
-	if !errors.Is(err, ErrUnknownKind) {
-		t.Fatalf("DeploymentFiles error = %v, want ErrUnknownKind", err)
-	}
-}
-
 func TestProvider_DisplayName(t *testing.T) {
-	p := &Provider{Kind: "test"}
+	p := &HostingProvider{Kind: "test"}
 	if p.DisplayName() != "test" {
 		t.Errorf("DisplayName = %q, want test", p.DisplayName())
 	}
@@ -263,7 +345,7 @@ func TestProvider_DisplayName(t *testing.T) {
 func TestProvider_DecodeConfig(t *testing.T) {
 	RegisterEngine("decode-test", &fakeEngine{})
 
-	var p Provider
+	var p HostingProvider
 	raw := []byte(`{
 		"kind": "decode-test",
 		"endpoint": "https://example.com",
@@ -333,7 +415,7 @@ func TestProvider_DestinationURL(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			provider := &Provider{BaseURL: tc.baseURL}
+			provider := &HostingProvider{BaseURL: tc.baseURL}
 			if got := provider.DestinationURL(tc.rel); got != tc.want {
 				t.Fatalf("DestinationURL() = %q, want %q", got, tc.want)
 			}
@@ -350,33 +432,31 @@ func TestProvider_DeployLogsSecretsAndFileDecisions(t *testing.T) {
 	mkFile(t, root, "index.html")
 	mkFile(t, root, "style.css")
 
-	provider := &Provider{
+	provider := &HostingProvider{
 		Kind:     "log-test",
 		Endpoint: "https://example.com",
 		Include:  FilterRules{Paths: []string{`\.html$`}},
-		Secrets: secrets.Secrets{
+		Secrets: Secrets{
 			{Name: "token", Key: "TOKEN"},
 			{Name: "missing", Key: "MISSING"},
 		},
 	}
-	runtime := &session.Session{
-		Secrets: secrets.Values{
-			"TOKEN": secrets.String("value"),
-		},
-	}
+	secretProviders := SecretsProviders{&fakeSecretProvider{
+		name:   "runtime",
+		values: map[string]string{"TOKEN": "value"},
+	}}
 
-	if err := provider.DeployNamed(context.Background(), "assets", root, runtime, DeploymentModeReplacement, &buf); err != nil {
+	if err := deployProvider(context.Background(), provider, root, secretProviders, CompleteDeployment, &buf); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
 	got := buf.String()
 	for _, want := range []string{
-		`[provider/log-test/assets] hosting "assets" init`,
-		`[provider/log-test/assets] secret "token" found`,
-		`[provider/log-test/assets] secret "missing" not_found`,
-		`[provider/log-test/assets] file "index.html" included`,
-		`[provider/log-test/assets] file "style.css" excluded`,
-		`[provider/log-test/assets] hosting "assets" ready`,
+		`[provider/log-test/log-test] secret "token" found`,
+		`[provider/log-test/log-test] secret "missing" not_found`,
+		`[provider/log-test/log-test] file "index.html" included`,
+		`[provider/log-test/log-test] file "style.css" excluded`,
+		`[provider/log-test/log-test] hosting "log-test" ready`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log output missing %q in:\n%s", want, got)
@@ -392,11 +472,11 @@ func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
 	root := t.TempDir()
 	mkFile(t, root, "index.html")
 
-	provider := &Provider{
+	provider := &HostingProvider{
 		Kind:     "fail-test",
 		Endpoint: "https://example.com",
 	}
-	err := provider.DeployNamed(context.Background(), "assets", root, nil, DeploymentModeReplacement, &buf)
+	err := deployProvider(context.Background(), provider, root, nil, CompleteDeployment, &buf)
 	if err == nil {
 		t.Fatal("Deploy() error = nil, want error")
 	}
@@ -404,7 +484,7 @@ func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
 	got := buf.String()
 	for _, want := range []string{
 		`[deployment] starting`,
-		`[provider/fail-test/assets] hosting "assets" failed`,
+		`[provider/fail-test/fail-test] hosting "fail-test" ready`,
 		`[deployment] failed`,
 	} {
 		if !strings.Contains(got, want) {

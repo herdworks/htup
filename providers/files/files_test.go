@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/herdworks/hyperproviders-go/secrets"
+	hosting "github.com/herdworks/hyperproviders-go"
 )
 
 func TestProvider_ResolveAbsolutePath(t *testing.T) {
@@ -19,7 +19,7 @@ func TestProvider_ResolveAbsolutePath(t *testing.T) {
 	}
 
 	provider := New()
-	value, err := provider.Resolve(context.Background(), nil, path)
+	value, err := provider.Resolve(context.Background(), path)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestProvider_ResolveRelativePath(t *testing.T) {
 	}
 
 	provider := New()
-	value, err := provider.Resolve(context.Background(), nil, "deploy_key.pem")
+	value, err := provider.Resolve(context.Background(), "deploy_key.pem")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestProvider_ResolveRelativePathFromBaseDir(t *testing.T) {
 	}
 
 	provider := NewWithBaseDirectory(dir)
-	value, err := provider.Resolve(context.Background(), nil, "deploy_key.pem")
+	value, err := provider.Resolve(context.Background(), "deploy_key.pem")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestProvider_ResolveTildeHomePath(t *testing.T) {
 	}
 
 	provider := NewWithBaseDirectory(t.TempDir())
-	value, err := provider.Resolve(context.Background(), nil, "~/deploy_key.pem")
+	value, err := provider.Resolve(context.Background(), "~/deploy_key.pem")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestProvider_ResolveDollarHomePath(t *testing.T) {
 	}
 
 	provider := NewWithBaseDirectory(t.TempDir())
-	value, err := provider.Resolve(context.Background(), nil, "$HOME/deploy_key.pem")
+	value, err := provider.Resolve(context.Background(), "$HOME/deploy_key.pem")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestProvider_ResolveBracedHomePath(t *testing.T) {
 	}
 
 	provider := NewWithBaseDirectory(t.TempDir())
-	value, err := provider.Resolve(context.Background(), nil, "${HOME}/deploy_key.pem")
+	value, err := provider.Resolve(context.Background(), "${HOME}/deploy_key.pem")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestProvider_ResolveRejectsUnsupportedExpansion(t *testing.T) {
 	provider := New()
 	for _, key := range []string{"~caleb/deploy_key.pem", "$DEPLOY_KEY"} {
 		t.Run(key, func(t *testing.T) {
-			_, err := provider.Resolve(context.Background(), nil, key)
+			_, err := provider.Resolve(context.Background(), key)
 			if err == nil {
 				t.Fatal("Resolve error = nil, want unsupported expansion")
 			}
@@ -129,9 +129,9 @@ func TestProvider_ResolveRejectsUnsupportedExpansion(t *testing.T) {
 
 func TestProvider_ResolveMissing(t *testing.T) {
 	provider := New()
-	_, err := provider.Resolve(context.Background(), nil, filepath.Join(t.TempDir(), "missing"))
-	if !errors.Is(err, secrets.ErrNotFound) {
-		t.Fatalf("Resolve err = %v, want ErrNotFound", err)
+	_, err := provider.Resolve(context.Background(), filepath.Join(t.TempDir(), "missing"))
+	if !errors.Is(err, hosting.ErrSecretNotFound) {
+		t.Fatalf("Resolve err = %v, want ErrSecretNotFound", err)
 	}
 }
 
@@ -143,8 +143,8 @@ func TestProvider_ResolveEmpty(t *testing.T) {
 	}
 
 	provider := New()
-	_, err := provider.Resolve(context.Background(), nil, path)
-	if !errors.Is(err, secrets.ErrEmpty) {
-		t.Fatalf("Resolve err = %v, want ErrEmpty", err)
+	_, err := provider.Resolve(context.Background(), path)
+	if !errors.Is(err, hosting.ErrSecretEmpty) {
+		t.Fatalf("Resolve err = %v, want ErrSecretEmpty", err)
 	}
 }

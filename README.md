@@ -1,49 +1,24 @@
 # HyperProviders
 
-HyperProviders is the HyperTexting CMS deployment engine.
-As a static site generation system, the HyperTexting CMS should support a wide variety of hosting providers, including those that support S3, Git, SSH, and Containers.
+HyperProviders prepares and executes a declarative deployment of one build
+directory to one or more selected hosting providers. It includes S3-compatible
+object storage and Git providers.
 
-The goal of the HyperTexting platform is to make updating your website _easier_ than posting to social media.
-Getting your website online should be easy because it should "just work" with your preferred provider.
-Updating your website should be easy because the provider optimizes updates to reduce payload sizes on mobile devices and networks.
+## Declarative deployments
 
-## Architecture
-
-Deployment is modeled as a `HostingProviders` map plus `HostingEnvironment` provider-name selections.
-Callers pass a deployment root directory, and HyperProviders handles file discovery, filtering, and provider fan-out internally.
-Every file's deployment path is always relative to that source directory's root.
-For example, deploying `relative/path/to/a/build/` writes `relative/path/to/a/build/index.html` as the object key `index.html` for an S3 provider, and as the path `index.html` in the root of the git repo for a Git provider.
-
-A provider's root `include` / `exclude` rules narrow what it accepts.
-HyperProviders does **not** dedupe across providers — the same file can legitimately be deployed by multiple providers (e.g. CDN + backup).
-The top-level `.deployment/` directory is reserved for provider-managed workspace state and is never deployed.
-Symlinks are not supported in deployment roots.
-
-Deploy calls require an explicit deployment mode:
-
-* `replacement` treats the deployment root as the desired contents of the provider target. Providers may delete remote resources absent from the artifact set when they support deletions.
-* `overlay` treats the deployment root as a non-authoritative set of writes. Providers must preserve remote resources absent from the artifact set.
-
-## Providers
-
-* **S3** — AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, any S3-compatible object store.
-    Concurrent uploads (`workers`, default `10`), opt-in ETag-based conditional PUT (`conditional_mode: "etag"`) for skip-if-unchanged deploys.
-* **Git** — any git remote (HTTPS or SSH), backed by `go-git/v5`.
-    Pure-Go, delta-efficient (unchanged files reuse blob IDs), provider workspace under `.deployment/git/`, optional `publish_dir` subtree, optional `known_hosts` config, opt-in build tagging with retention pruning.
-* **SSH** (planned)
-* **Containers** (planned)
-
-## Install
-
-```sh
-go get github.com/herdworks/hyperproviders-go@latest
-```
-
-## Library usage
+A `Deployment` is the high-level operation. Construct it with the providers
+selected for this attempt, the build root, and whether the build is complete or
+incremental. `Prepare` validates local configuration, loads deployment
+instructions, discovers the build once, and materializes an immutable plan. It
+does not resolve credentials or write to a remote service. `Execute` performs
+the prepared plan after every provider passes its readiness check.
 
 ```go
 import (
+    "context"
+
     hp "github.com/herdworks/hyperproviders-go"
+    "github.com/herdworks/hyperproviders-go/providers/runtime"
     "github.com/herdworks/hyperproviders-go/providers/s3"
 )
 
@@ -52,169 +27,172 @@ providers := hp.HostingProviders{
         Kind:     s3.Kind,
         Endpoint: "https://example.r2.cloudflarestorage.com",
         BaseURL:  "https://assets.example.com",
-        Secrets: hp.Secrets{
-            {Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
-            {Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
-        },
         Config: map[string]any{
-            "bucket": "my-bucket",
-            "region": "us-east-1",
-            "addressing_style": "path",
+            "bucket": "my-site-assets",
+            "region": "auto",
+        },
+        Secrets: hp.Secrets{
+            {Name: "access_key_id", Key: "R2_ACCESS_KEY_ID"},
+            {Name: "secret_access_key", Key: "R2_SECRET_ACCESS_KEY"},
         },
     },
 }
-environment := hp.HostingEnvironment{"assets"}
-session := &hp.Session{
-    Secrets: hp.SecretValues{
-        "AWS_ACCESS_KEY_ID":     hp.StringSecret(accessKey),
-        "AWS_SECRET_ACCESS_KEY": hp.StringSecret(secretAccessKey),
-    },
+
+deployment := &hp.Deployment{
+    Providers: providers,
+    Path:      "./build",
+    Kind:      hp.CompleteDeployment,
 }
-if err := environment.Deploy(ctx, providers, "./build", session, hp.DeploymentModeReplacement); err != nil { /* ... */ }
+
+if err := deployment.Prepare(context.Background(), nil); err != nil {
+    // The plan is not ready; no provider operation has run.
+}
+plan := deployment.Plan() // A caller-owned snapshot, suitable for a dry run.
+_ = plan
+
+secrets := hp.SecretsProviders{runtime.New(runtime.Secrets{
+    "R2_ACCESS_KEY_ID":     hp.StringSecret(accessKey),
+    "R2_SECRET_ACCESS_KEY": hp.StringSecret(secretAccessKey),
+})}
+if err := deployment.Execute(context.Background(), secrets, nil); err != nil {
+    // No completed or failed Deployment may be executed again.
+}
 ```
 
-Deploys write progress logs to standard output with `[deployment]` and
-`[provider/<kind>/<name>]` prefixes. Provider setup logs hosting init/ready, configured
-secret names as found/not_found/empty/error without logging values, and source
-files as included/excluded after filtering. Provider engines log destination
-resources; resource URLs use the provider's `BaseURL` when set and fall back to
-root-relative paths when `BaseURL` is empty.
+`CompleteDeployment` asks a provider to deploy the complete build; providers
+that support replacement, such as Git, remove files absent from that build.
+`IncrementalDeployment` overlays the supplied files and preserves remote files
+that are absent from the build. `Instructions()`, `Plan()`, and `Status()`
+return snapshots of the prepared deployment state; changing those returned
+values cannot change an eventual execution.
 
-Callers that manage multiple deployment environments should usually model
-providers as `hyperproviders.HostingProviders` and environments as
-`map[string]*hyperproviders.HostingEnvironment`. The provider map key is the provider
-identifier used for selection, and each environment is an ordered list of those
-provider names.
+Each selected provider produces exactly one operation. Operations with
+applicable preconditions run sequentially in instruction order; remaining
+operations run concurrently after they succeed. A provider's `include` and
+`exclude` path/MIME rules determine both file ownership and whether it owns a
+precondition target. The same artifact can intentionally belong to multiple
+providers.
 
-Secret declarations require both `name` and `key`: `name` is the provider-defined
-credential role, and `key` is the caller-defined runtime lookup key. Hosting
-providers treat secret providers as key/value stores and do not perform
-provider-specific secondary lookups. When `Session.SecretProviders` is omitted,
-HyperProviders resolves secrets only from `Session.Secrets`. Add
-`providers/env.New()` explicitly when environment variable lookup should be
-available. Add `providers/files.New()` explicitly when secret keys should be
-read as local filesystem paths; the files provider expands only `~/`, `$HOME/`,
-and `${HOME}/`. Add `providers/runtime.New()` explicitly when runtime secrets
-should participate in a custom precedence list.
-Import each provider engine package you need before validating, planning, or
-deploying so its `init` registration makes that `kind` available.
+## Build-root workspace and instructions
 
-## `htdt` — HyperTexting Deploy Tool
+The build root may contain two deployment-control paths:
 
-`htdt` is a standalone CLI for deploying any directory using hyperproviders-go.
-It reads a JSON or YAML config file with a `providers` map and an `environments` map, then deploys the chosen environment's provider names.
-The CLI session resolves secrets from OS environment variables.
-Generic provider fields (`kind`, `endpoint`, `base_url`, `include`, `exclude`, `secrets`) live at the provider root.
-Provider-specific settings live under `config`.
-For S3 providers, `workers` controls concurrent object uploads and must be at least `1` when set.
-For Git providers, `publish_dir` controls where files are written in the repository and defaults to `.`.
-For Git providers, `replacement` clears `publish_dir` before writing the deployment root, while `overlay` writes only provided files and preserves existing branch files that are absent from the deployment root.
-For Git SSH remotes, `known_hosts` is optional literal OpenSSH `known_hosts` content; when omitted, SSH host key verification uses `ssh.InsecureIgnoreHostKey`.
-Git SSH auth requires an `ssh_private_key` secret whose resolved value is PEM private key content. CLI callers that want to keep key material in a file can include `providers/files.New()` or `providers/files.NewWithBaseDirectory(baseDir)` in their session and configure `ssh_private_key.key` as the file path.
+- `.deployment.json` declares conditional writes, ignored build files, and
+  files that must be uploaded after the ordinary bulk set.
+- `.deployment/` is reserved workspace state. HyperProviders never deploys it.
+  Generators may place the byte sources referenced by `.deployment.json` here;
+  the Git provider also uses it for its local checkout and deployment logs.
+
+This makes the build output self-contained for upstream generators. For
+example, a sync-aware generator can write its expected and pending state beside
+the build artifacts:
+
+```text
+build/
+  index.html
+  .hypersync/
+    manifests/next.json
+    revision.json
+  .deployment/
+    expected-revision.json
+    pending-revision.json
+  .deployment.json
+```
+
+```json
+{
+  "preconditions": [
+    {
+      "target": ".hypersync/revision.json",
+      "expected": ".deployment/expected-revision.json",
+      "contents": ".deployment/pending-revision.json"
+    }
+  ],
+  "ignore": ["drafts/*"],
+  "enqueue": [".hypersync/manifests/*.json", ".hypersync/revision.json"]
+}
+```
+
+`target`, `expected`, and `contents` are normalized build-relative paths.
+Omitting `expected` is a create-only precondition; a present but empty expected
+file requires an existing empty target. `contents` and `expected` are read and
+copied during preparation, so later changes to their source files do not alter
+the plan. Provider filters classify a precondition by its target path (for
+example, `revision.json` is JSON), not the extension of the local source file.
+
+`enqueue` is a declaration-ordered list of glob patterns. The first matching
+pattern claims a file; claimed files are removed from bulk uploads and written
+one at a time after bulk uploads. `.deployment.json.ignore` replaces the legacy
+`.deploymentignore`; using both is an error.
+
+## Providers
+
+- **S3** supports S3-compatible services including AWS S3, Cloudflare R2,
+  MinIO, and DigitalOcean Spaces. Precondition replacements compare exact
+  remote bytes and use the remote ETag for the conditional write.
+- **Git** publishes one final commit to a remote branch. It validates
+  preconditions against the fetched branch base, materializes the final tree,
+  and safely fails if the branch advances before push.
+
+Import each provider package used by a configuration so its engine is
+registered before preparation:
+
+```go
+import (
+    _ "github.com/herdworks/hyperproviders-go/providers/git"
+    _ "github.com/herdworks/hyperproviders-go/providers/s3"
+)
+```
+
+## `htdt`
+
+`htdt` reads JSON or YAML provider/environment configuration. An environment
+is an explicit ordered selection from the provider map.
 
 ```sh
 go install github.com/herdworks/hyperproviders-go/cmd/htdt@latest
 
 htdt validate --config ./htdt.json
-htdt ready    --config ./htdt.json --environment production
-htdt deploy   --config ./htdt.json --environment production --source ./build --mode replacement
-htdt list     --config ./htdt.json
+htdt ready --config ./htdt.json --environment production
+htdt deploy --config ./htdt.json --environment production --source ./build --mode complete --dry-run
+htdt deploy --config ./htdt.json --environment production --source ./build --mode complete
 ```
 
-`validate` checks static provider configuration. `ready` also resolves runtime
-secrets from OS environment variables and performs local provider-specific
-credential checks, without contacting remote services.
+`--dry-run` calls `Prepare` and prints the sequential and concurrent operations,
+including each precondition, bulk artifact, and enqueued artifact. It performs
+no provider readiness check or remote write.
 
-Example `htdt.json`:
+Example configuration:
 
 ```json
 {
   "version": 1,
   "providers": {
-    "production-assets": {
+    "assets": {
       "kind": "s3",
       "endpoint": "https://<accountid>.r2.cloudflarestorage.com",
-      "base_url": "https://assets.example.com",
-      "config": {
-        "bucket": "my-site-assets",
-        "region": "auto",
-        "addressing_style": "path",
-        "cache_control": "public, max-age=3600",
-        "conditional_mode": "etag",
-        "workers": 10
-      },
-      "include": {
-        "types": ["^image/", "^video/", "^audio/"]
-      },
+      "config": { "bucket": "my-site-assets", "region": "auto" },
       "secrets": [
         { "name": "access_key_id", "key": "R2_ACCESS_KEY_ID" },
         { "name": "secret_access_key", "key": "R2_SECRET_ACCESS_KEY" }
       ]
-    },
-    "production-pages": {
-      "kind": "git",
-      "endpoint": "git@github.com:acme/site.git",
-      "base_url": "https://example.com",
-      "config": {
-        "branch": "gh-pages",
-        "publish_dir": ".",
-        "author_name": "hyperproviders bot",
-        "author_email": "bot@example.com"
-      },
-      "exclude": {
-        "types": ["^image/", "^video/", "^audio/"]
-      },
-      "secrets": [
-        { "name": "ssh_private_key", "key": "DEPLOY_SSH_KEY" }
-      ]
     }
   },
-  "environments": {
-    "production": ["production-assets", "production-pages"]
-  }
+  "environments": { "production": ["assets"] }
 }
 ```
 
-See `cmd/htdt/testdata/config.sample.json` and `cmd/htdt/testdata/config.sample.yaml` for reference configs.
+`validate` checks static provider configuration. `ready` also resolves local
+credentials (from environment variables in `htdt`) without contacting a remote
+service.
 
-## Compatible Hosting Services
+## Development
 
-1. Cloudflare Pages (`git`)
-1. Cloudflare Workers w/ Static Assets (`git`)
-1. GitHub Pages (`git`)
-1. Netlify (`git`)
-1. Vercel (`git`)
-1. Heroku (`git`)
-1. Self-hosted (`git`)
-1. Cloudflare R2 (`s3`)
-1. Fastly Object Storage (`s3`)
-1. Digital Ocean Spaces (`s3`)
-1. Amazon S3 (`s3`)
-1. Azure Blob Storage (`s3`)
-1. Google Cloud Storage (`s3`)
+Run tests from this module:
 
-> ### Coming soon
-> 
-> With the addition of SSH and container providers (coming soon), HyperProviders will gain support for automated deployment to the following hosting services: 
-> 
-> 1. Linode (`ssh`)
-> 1. Self hosted (`ssh`)
-> 1. Amazon EC2 (`ssh`)
-> 1. Google Cloud Compute (`ssh`)
-> 1. Azure Virtual Machines (`ssh`)
-> 1. Digital Ocean Droplets (`ssh`)
-> 1. Cloudflare Containers (`containers`)
-> 1. Amazon Fargate (`containers`)
-> 1. Amazon ECS (`containers`)
-> 1. Google Cloud Run (`containers`)
-> 1. Google Cloud GKE (`containers`)
-> 1. Azure Container Apps (`containers`)
-> 1. Azure AKS (`containers`)
+```sh
+go test ./... -v
+```
 
-## Troubleshooting
-
-_Running `go test ./...` for the `providers/git` package requires a working local git toolchain._
-The tests stand up a bare repo under `t.TempDir()` and use `file://` URLs.
-
-_The AWS SDK dependency bumps the minimum Go toolchain to `go1.25.0`._
-`go get` will fetch the required toolchain automatically.
+The Git tests use temporary local `file://` remotes. The S3 tests use local HTTP
+test servers. The AWS SDK requires Go 1.25 or newer.

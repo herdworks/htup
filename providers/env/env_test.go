@@ -5,14 +5,14 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/herdworks/hyperproviders-go/secrets"
+	hosting "github.com/herdworks/hyperproviders-go"
 )
 
 func TestProvider_Resolve(t *testing.T) {
 	t.Setenv("TEST_HYPER_SECRET", "s3cret")
 
 	provider := New()
-	value, err := provider.Resolve(context.Background(), nil, "TEST_HYPER_SECRET")
+	value, err := provider.Resolve(context.Background(), "TEST_HYPER_SECRET")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -25,8 +25,8 @@ func TestProvider_ResolveEmptyReturnsError(t *testing.T) {
 	t.Setenv("TEST_HYPER_MISSING", "")
 
 	provider := New()
-	_, err := provider.Resolve(context.Background(), nil, "TEST_HYPER_MISSING")
-	if !errors.Is(err, secrets.ErrEmpty) {
+	_, err := provider.Resolve(context.Background(), "TEST_HYPER_MISSING")
+	if !errors.Is(err, hosting.ErrSecretEmpty) {
 		t.Fatalf("Resolve err = %v, want ErrSecretEmpty", err)
 	}
 }

@@ -1,7 +1,6 @@
-package secrets
+package hyperproviders
 
 import (
-	"context"
 	"errors"
 	"testing"
 )
@@ -19,15 +18,15 @@ func TestSecrets_GetAndRequire(t *testing.T) {
 	if secret.LookupKey() != "TEST_A" {
 		t.Errorf("LookupKey = %q, want TEST_A", secret.LookupKey())
 	}
-	if _, err := ss.Get("missing"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Get(missing) err = %v, want ErrNotFound", err)
+	if _, err := ss.Get("missing"); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("Get(missing) err = %v, want ErrSecretNotFound", err)
 	}
 
 	if err := ss.Require("a", "b"); err != nil {
 		t.Fatalf("Require: %v", err)
 	}
-	if err := ss.Require("a", "c"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Require missing err = %v, want ErrNotFound", err)
+	if err := ss.Require("a", "c"); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("Require missing err = %v, want ErrSecretNotFound", err)
 	}
 }
 
@@ -43,26 +42,18 @@ func TestSecrets_ValidateRequiresNameAndKey(t *testing.T) {
 		t.Fatalf("Validate complete secret: %v", err)
 	}
 
-	if err := (Secrets{{Key: "DEPLOY_TOKEN"}}).Validate(); !errors.Is(err, ErrMissingName) {
-		t.Fatalf("Validate missing name err = %v, want ErrMissingName", err)
+	if err := (Secrets{{Key: "DEPLOY_TOKEN"}}).Validate(); !errors.Is(err, ErrSecretMissingName) {
+		t.Fatalf("Validate missing name err = %v, want ErrSecretMissingName", err)
 	}
 
-	if err := (Secrets{{Name: "token"}}).Validate(); !errors.Is(err, ErrMissingKey) {
-		t.Fatalf("Validate missing key err = %v, want ErrMissingKey", err)
-	}
-}
-
-func TestProviderBase_ResolveRequiresImplementation(t *testing.T) {
-	provider := &ProviderBase{ProviderName: "default"}
-	_, err := provider.Resolve(context.Background(), nil, "TEST")
-	if !errors.Is(err, ErrResolveRequired) {
-		t.Fatalf("Resolve err = %v, want ErrResolveRequired", err)
+	if err := (Secrets{{Name: "token"}}).Validate(); !errors.Is(err, ErrSecretMissingKey) {
+		t.Fatalf("Validate missing key err = %v, want ErrSecretMissingKey", err)
 	}
 }
 
 func TestValue_BytesCopies(t *testing.T) {
 	source := []byte("secret")
-	value := Bytes(source)
+	value := BytesSecret(source)
 	source[0] = 'S'
 
 	got := value.Bytes()

@@ -3,13 +3,20 @@ package s3
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/herdworks/hyperproviders-go/hosting"
-	"github.com/herdworks/hyperproviders-go/secrets"
-	"github.com/herdworks/hyperproviders-go/session"
+	hosting "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/hyperproviders-go/providers/runtime"
 )
 
 func TestUnmarshalHostingProvider(t *testing.T) {
@@ -29,7 +36,7 @@ func TestUnmarshalHostingProvider(t *testing.T) {
 			{ "name": "secret_access_key", "key": "AWS_SECRET_ACCESS_KEY" }
 		]
 	}`)
-	var provider hosting.Provider
+	var provider hosting.HostingProvider
 	if err := json.Unmarshal(raw, &provider); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
@@ -55,7 +62,7 @@ func TestUnmarshalHostingProvider(t *testing.T) {
 }
 
 func TestValidate_RequiresBucket(t *testing.T) {
-	provider := &hosting.Provider{
+	provider := &hosting.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config:   map[string]any{},
@@ -66,11 +73,11 @@ func TestValidate_RequiresBucket(t *testing.T) {
 }
 
 func TestValidate_UsesBucketFromEndpointPath(t *testing.T) {
-	provider := &hosting.Provider{
+	provider := &hosting.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com/path-bucket",
 		Config:   map[string]any{},
-		Secrets: secrets.Secrets{
+		Secrets: hosting.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -89,7 +96,7 @@ func TestValidate_UsesBucketFromEndpointPath(t *testing.T) {
 }
 
 func TestValidate_RejectsUnknownConditionalMode(t *testing.T) {
-	provider := &hosting.Provider{
+	provider := &hosting.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config: map[string]any{
@@ -103,12 +110,12 @@ func TestValidate_RejectsUnknownConditionalMode(t *testing.T) {
 }
 
 func TestValidate_UsesBucketFromConfig(t *testing.T) {
-	provider := &hosting.Provider{
+	provider := &hosting.HostingProvider{
 		Config: map[string]any{
 			"bucket": "configured-bucket",
 			"region": "us-east-1",
 		},
-		Secrets: secrets.Secrets{
+		Secrets: hosting.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -130,12 +137,12 @@ func TestValidate_UsesBucketFromConfig(t *testing.T) {
 }
 
 func TestValidate_AllowsVirtualAddressingWithoutBucket(t *testing.T) {
-	provider := &hosting.Provider{
+	provider := &hosting.HostingProvider{
 		Config: map[string]any{
 			"addressing_style": "virtual",
 			"region":           "us-east-1",
 		},
-		Secrets: secrets.Secrets{
+		Secrets: hosting.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -154,7 +161,7 @@ func TestValidate_AllowsVirtualAddressingWithoutBucket(t *testing.T) {
 }
 
 func TestValidate_RejectsUnknownAddressingStyle(t *testing.T) {
-	provider := &hosting.Provider{Config: map[string]any{"addressing_style": "sideways"}}
+	provider := &hosting.HostingProvider{Config: map[string]any{"addressing_style": "sideways"}}
 
 	if err := (Engine{}).Validate(provider); err == nil {
 		t.Fatal("expected error for unknown addressing_style")
@@ -162,7 +169,7 @@ func TestValidate_RejectsUnknownAddressingStyle(t *testing.T) {
 }
 
 func TestValidate_RejectsInvalidWorkers(t *testing.T) {
-	provider := &hosting.Provider{Config: map[string]any{"workers": 0}}
+	provider := &hosting.HostingProvider{Config: map[string]any{"workers": 0}}
 
 	err := (Engine{}).Validate(provider)
 	if err == nil {
@@ -176,7 +183,7 @@ func TestValidate_RejectsInvalidWorkers(t *testing.T) {
 func TestReady_RequiresRuntimeSecrets(t *testing.T) {
 	provider := readyProvider()
 
-	err := provider.Ready(context.Background(), &session.Session{})
+	err := provider.Ready(context.Background(), nil)
 	if err == nil {
 		t.Fatal("Ready error = nil, want missing secret")
 	}
@@ -187,24 +194,22 @@ func TestReady_RequiresRuntimeSecrets(t *testing.T) {
 
 func TestReady_WithRuntimeSecrets(t *testing.T) {
 	provider := readyProvider()
-	runtime := &session.Session{
-		Secrets: secrets.Values{
-			"AWS_ACCESS_KEY_ID":     secrets.String("access"),
-			"AWS_SECRET_ACCESS_KEY": secrets.String("secret"),
-		},
-	}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{
+		"AWS_ACCESS_KEY_ID":     hosting.StringSecret("access"),
+		"AWS_SECRET_ACCESS_KEY": hosting.StringSecret("secret"),
+	})
 
-	if err := provider.Ready(context.Background(), runtime); err != nil {
+	if err := provider.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
 }
 
-func readyProvider() *hosting.Provider {
-	return &hosting.Provider{
+func readyProvider() *hosting.HostingProvider {
+	return &hosting.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config:   map[string]any{"bucket": "assets"},
-		Secrets: secrets.Secrets{
+		Secrets: hosting.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -259,4 +264,204 @@ func TestNormalizeETag(t *testing.T) {
 			t.Errorf("normalizeETag(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+func TestCompareAndSwapFileReplacesExactExpectedBytes(t *testing.T) {
+	root := t.TempDir()
+	condition := preconditionForTest(t, root, true)
+	var putBody []byte
+	var ifMatch string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/assets/revision.json" {
+			t.Fatalf("path = %q", request.URL.Path)
+		}
+		switch request.Method {
+		case http.MethodGet:
+			writer.Header().Set("ETag", `"old-etag"`)
+			_, _ = writer.Write([]byte("expected"))
+		case http.MethodPut:
+			ifMatch = request.Header.Get("If-Match")
+			putBody, _ = io.ReadAll(request.Body)
+			writer.WriteHeader(http.StatusOK)
+		default:
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	provider := readyProvider()
+	provider.Endpoint = server.URL
+	if err := (Engine{}).compareAndSwap(context.Background(), readySecretProviders(), provider, condition, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if ifMatch != `"old-etag"` {
+		t.Fatalf("If-Match = %q", ifMatch)
+	}
+	if string(putBody) != "replacement" {
+		t.Fatalf("PUT body = %q", putBody)
+	}
+}
+
+func TestCompareAndSwapFileRejectsDifferentRemoteBytes(t *testing.T) {
+	root := t.TempDir()
+	condition := preconditionForTest(t, root, true)
+	put := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodGet:
+			writer.Header().Set("ETag", `"old-etag"`)
+			_, _ = writer.Write([]byte("different"))
+		case http.MethodPut:
+			put = true
+			writer.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+	provider := readyProvider()
+	provider.Endpoint = server.URL
+	err := (Engine{}).compareAndSwap(context.Background(), readySecretProviders(), provider, condition, io.Discard)
+	if !errors.Is(err, hosting.ErrDeploymentPreconditionFailed) {
+		t.Fatalf("CompareAndSwapFile error = %v", err)
+	}
+	if put {
+		t.Fatal("conditional PUT ran after an exact-byte mismatch")
+	}
+}
+
+func TestCompareAndSwapFileCreatesOnlyWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+	condition := preconditionForTest(t, root, false)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodPut {
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if got := request.Header.Get("If-None-Match"); got != "*" {
+			t.Fatalf("If-None-Match = %q", got)
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	provider := readyProvider()
+	provider.Endpoint = server.URL
+	if err := (Engine{}).compareAndSwap(context.Background(), readySecretProviders(), provider, condition, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want one conditional PUT", requests)
+	}
+}
+
+func TestDeployment_S3OperationOrdersPreconditionBulkAndEnqueue(t *testing.T) {
+	root := t.TempDir()
+	for rel, contents := range map[string]string{
+		"bulk/first.txt":       "first",
+		"bulk/second.txt":      "second",
+		"queued/first.txt":     "queued first",
+		"queued/second.txt":    "queued second",
+		".deployment/expected": "old",
+		".deployment/pending":  "new",
+		".deployment.json":     `{"preconditions":[{"target":"revision.json","expected":".deployment/expected","contents":".deployment/pending"}],"enqueue":["queued/first.txt","queued/second.txt"]}`,
+	} {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var mu sync.Mutex
+	var writes []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodGet:
+			if request.URL.Path != "/assets/revision.json" {
+				t.Fatalf("GET path = %q", request.URL.Path)
+			}
+			writer.Header().Set("ETag", `"old"`)
+			_, _ = writer.Write([]byte("old"))
+		case http.MethodPut:
+			mu.Lock()
+			writes = append(writes, strings.TrimPrefix(request.URL.Path, "/assets/"))
+			mu.Unlock()
+			writer.WriteHeader(http.StatusOK)
+		default:
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	provider := readyProvider()
+	provider.Endpoint = server.URL
+	deployment := &hosting.Deployment{
+		Providers: hosting.HostingProviders{"assets": provider},
+		Path:      root,
+		Kind:      hosting.CompleteDeployment,
+	}
+	if err := deployment.Execute(context.Background(), readySecretProviders(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(writes) != 5 {
+		t.Fatalf("writes = %#v", writes)
+	}
+	if writes[0] != "revision.json" {
+		t.Fatalf("first write = %q, want precondition target", writes[0])
+	}
+	if got, want := writes[3:], []string{"queued/first.txt", "queued/second.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("enqueued writes = %#v, want %#v", got, want)
+	}
+	bulk := map[string]bool{writes[1]: true, writes[2]: true}
+	if !bulk["bulk/first.txt"] || !bulk["bulk/second.txt"] {
+		t.Fatalf("bulk writes = %#v", writes[1:3])
+	}
+}
+
+func preconditionForTest(t *testing.T, root string, expected bool) hosting.PreconditionFile {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, ".deployment"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".deployment", "pending.json"), []byte("replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	condition := `{"target":"revision.json","contents":".deployment/pending.json"}`
+	if expected {
+		if err := os.WriteFile(filepath.Join(root, ".deployment", "expected.json"), []byte("expected"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		condition = `{"target":"revision.json","expected":".deployment/expected.json","contents":".deployment/pending.json"}`
+	}
+	if err := os.WriteFile(filepath.Join(root, hosting.DeploymentInstructionsFile), []byte(`{"preconditions":[`+condition+`]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := os.ReadFile(filepath.Join(root, ".deployment", "pending.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := hosting.PreconditionFile{Target: "revision.json", Content: pending}
+	if expected {
+		prepared.Expected, err = os.ReadFile(filepath.Join(root, ".deployment", "expected.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = pending
+	return prepared
+}
+
+func readySecretProviders() hosting.SecretsProviders {
+	return runtimeSecretProviders(runtime.Secrets{
+		"AWS_ACCESS_KEY_ID":     hosting.StringSecret("access"),
+		"AWS_SECRET_ACCESS_KEY": hosting.StringSecret("secret"),
+	})
+}
+
+func runtimeSecretProviders(secrets runtime.Secrets) hosting.SecretsProviders {
+	return hosting.SecretsProviders{runtime.New(secrets)}
 }

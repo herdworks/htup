@@ -1,4 +1,4 @@
-// Package files implements a secrets.Provider backed by local files.
+// Package files implements a hosting.SecretsProvider backed by local files.
 package files
 
 import (
@@ -8,14 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/herdworks/hyperproviders-go/secrets"
+	hosting "github.com/herdworks/hyperproviders-go"
 )
 
 const Kind = "files"
 
 // Provider resolves secret keys as file paths and returns file contents.
 type Provider struct {
-	*secrets.ProviderBase
 	BaseDir string
 }
 
@@ -28,14 +27,15 @@ func New() *Provider {
 // paths from baseDir. Absolute paths are always used as provided.
 func NewWithBaseDirectory(baseDir string) *Provider {
 	return &Provider{
-		ProviderBase: &secrets.ProviderBase{ProviderName: Kind},
-		BaseDir:      baseDir,
+		BaseDir: baseDir,
 	}
 }
 
+func (*Provider) Name() string { return Kind }
+
 // Resolve reads key as a filesystem path. Relative paths are joined to BaseDir
 // when configured. Only ~/, $HOME/, and ${HOME}/ are expanded.
-func (p *Provider) Resolve(ctx context.Context, values secrets.Values, key string) (secrets.Value, error) {
+func (p *Provider) Resolve(ctx context.Context, key string) (hosting.SecretValue, error) {
 	path, err := p.resolvePath(key)
 	if err != nil {
 		return nil, err
@@ -43,14 +43,14 @@ func (p *Provider) Resolve(ctx context.Context, values secrets.Values, key strin
 	value, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", secrets.ErrNotFound, key)
+			return nil, fmt.Errorf("%w: %s", hosting.ErrSecretNotFound, key)
 		}
 		return nil, fmt.Errorf("read file secret %s: %w", key, err)
 	}
 	if len(value) == 0 {
-		return nil, fmt.Errorf("%w: %s", secrets.ErrEmpty, key)
+		return nil, fmt.Errorf("%w: %s", hosting.ErrSecretEmpty, key)
 	}
-	return secrets.Bytes(value), nil
+	return hosting.BytesSecret(value), nil
 }
 
 func (p *Provider) resolvePath(key string) (string, error) {

@@ -1,9 +1,10 @@
-// Package s3 implements a hyperproviders.HostingProviderEngine backed by an
+// Package s3 implements a hyperproviders HostingEngine backed by an
 // S3-compatible object store (AWS S3, Cloudflare R2, MinIO, DigitalOcean
 // Spaces, etc.).
 package s3
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,8 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/herdworks/hyperproviders-go/hosting"
-	"github.com/herdworks/hyperproviders-go/session"
+	hosting "github.com/herdworks/hyperproviders-go"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -67,7 +67,7 @@ type ProviderConfig struct {
 	Workers         int    `json:"workers,omitempty"`
 }
 
-func newSettings(provider *hosting.Provider) (*settings, error) {
+func newSettings(provider *hosting.HostingProvider) (*settings, error) {
 	cfg := &settings{}
 	if len(provider.Config) > 0 {
 		var cfg ProviderConfig
@@ -91,7 +91,7 @@ func newSettings(provider *hosting.Provider) (*settings, error) {
 	return finishSettings(provider, cfg)
 }
 
-func finishSettings(provider *hosting.Provider, cfg *settings) (*settings, error) {
+func finishSettings(provider *hosting.HostingProvider, cfg *settings) (*settings, error) {
 	if cfg.Workers < 0 {
 		return nil, errors.New("s3: workers must be at least 1")
 	}
@@ -120,26 +120,23 @@ func finishSettings(provider *hosting.Provider, cfg *settings) (*settings, error
 }
 
 // Validate validates S3-specific configuration.
-func (Engine) Validate(provider *hosting.Provider) error {
+func (Engine) Validate(provider *hosting.HostingProvider) error {
 	_, err := validateSettings(provider)
 	return err
 }
 
 // Ready validates S3 configuration and confirms runtime credentials can build a
 // local client. It intentionally does not perform remote S3 network probes.
-func (engine Engine) Ready(ctx context.Context, runtime *session.Session, provider *hosting.Provider) error {
-	if runtime == nil {
-		runtime = &session.Session{}
-	}
+func (engine Engine) Ready(ctx context.Context, secretProviders hosting.SecretsProviders, provider *hosting.HostingProvider) error {
 	cfg, err := validateSettings(provider)
 	if err != nil {
 		return err
 	}
-	_, err = engine.newClient(ctx, runtime, provider, cfg)
+	_, err = engine.newClient(ctx, secretProviders, provider, cfg)
 	return err
 }
 
-func validateSettings(provider *hosting.Provider) (*settings, error) {
+func validateSettings(provider *hosting.HostingProvider) (*settings, error) {
 	cfg, err := newSettings(provider)
 	if err != nil {
 		return nil, err
@@ -159,8 +156,8 @@ func validateSettings(provider *hosting.Provider) (*settings, error) {
 // Deploy discovers files under root, applies the provider filter, and uploads
 // every selected file concurrently, bounded by the provider's Workers setting
 // or the S3 default. Respects ctx.
-func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File, mode hosting.DeploymentMode, w io.Writer) error {
-	if err := mode.Validate(); err != nil {
+func (engine Engine) deployFiles(ctx context.Context, secretProviders hosting.SecretsProviders, provider *hosting.HostingProvider, files []*hosting.File, kind hosting.DeploymentKind, w io.Writer) error {
+	if err := kind.Validate(); err != nil {
 		return err
 	}
 	cfg, err := newSettings(provider)
@@ -170,7 +167,7 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 	if len(files) == 0 {
 		return nil
 	}
-	client, err := engine.newClient(ctx, runtime, provider, cfg)
+	client, err := engine.newClient(ctx, secretProviders, provider, cfg)
 	if err != nil {
 		return err
 	}
@@ -191,6 +188,92 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 	return g.Wait()
 }
 
+func (Engine) ValidateOperation(provider *hosting.HostingProvider, operation hosting.DeploymentOperation) error {
+	return nil
+}
+
+// PerformOperation preserves precondition, bulk, and final enqueue ordering.
+func (engine Engine) PerformOperation(ctx context.Context, secretProviders hosting.SecretsProviders, operation hosting.DeploymentOperation, w io.Writer) error {
+	for _, condition := range operation.Preconditions {
+		if err := engine.compareAndSwap(ctx, secretProviders, operation.HostingProvider, condition, w); err != nil {
+			return err
+		}
+	}
+	if err := engine.deployFiles(ctx, secretProviders, operation.HostingProvider, operation.Bulk, operation.Kind, w); err != nil {
+		return err
+	}
+	for _, file := range operation.Enqueued {
+		if err := engine.deployFiles(ctx, secretProviders, operation.HostingProvider, []*hosting.File{file}, hosting.IncrementalDeployment, w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// compareAndSwap provides an atomic conditional write at the S3 boundary.
+// A replacement first proves exact remote bytes match Expected, then submits a
+// PutObject bound to that object's authoritative ETag. A create uses
+// If-None-Match: * and never falls back to a blind put.
+func (engine Engine) compareAndSwap(ctx context.Context, secretProviders hosting.SecretsProviders, provider *hosting.HostingProvider, condition hosting.PreconditionFile, w io.Writer) error {
+	cfg, err := newSettings(provider)
+	if err != nil {
+		return err
+	}
+	client, err := engine.newClient(ctx, secretProviders, provider, cfg)
+	if err != nil {
+		return err
+	}
+	input, err := conditionalPutInput(condition, cfg)
+	if err != nil {
+		return err
+	}
+	if condition.Expected == nil {
+		input.IfNoneMatch = aws.String("*")
+	} else {
+		remote, err := client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(condition.Target)})
+		if err != nil {
+			if isNotFoundHTTPError(err) {
+				return fmt.Errorf("%w: target %q does not exist", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+			}
+			return fmt.Errorf("s3: get precondition target %s: %w", condition.Target, err)
+		}
+		remoteBytes, readErr := io.ReadAll(remote.Body)
+		closeErr := remote.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("s3: read precondition target %s: %w", condition.Target, readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("s3: close precondition target %s: %w", condition.Target, closeErr)
+		}
+		if !bytes.Equal(remoteBytes, condition.Expected) || remote.ETag == nil {
+			return fmt.Errorf("%w: target %q differs from expected contents", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+		}
+		input.IfMatch = remote.ETag
+	}
+	if _, err := client.PutObject(ctx, input); err != nil {
+		if isPreconditionError(err) {
+			return fmt.Errorf("%w: target %q changed", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+		}
+		return fmt.Errorf("s3: conditional put %s: %w", condition.Target, err)
+	}
+	return nil
+}
+
+func conditionalPutInput(condition hosting.PreconditionFile, cfg *settings) (*awss3.PutObjectInput, error) {
+	body := bytes.NewReader(condition.Content)
+	input := &awss3.PutObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(condition.Target), Body: body, ContentType: aws.String(hosting.MimetypeForPath(condition.Target))}
+	if cfg.CacheControl != "" {
+		input.CacheControl = aws.String(cfg.CacheControl)
+	}
+	return input, nil
+}
+
+func isPreconditionError(err error) bool {
+	type statusCoder interface{ HTTPStatusCode() int }
+	var status statusCoder
+	return errors.As(err, &status) && (status.HTTPStatusCode() == 409 || status.HTTPStatusCode() == 412)
+}
+
 func workersOrDefault(workers int) int {
 	if workers > 0 {
 		return workers
@@ -198,7 +281,7 @@ func workersOrDefault(workers int) int {
 	return DefaultWorkers
 }
 
-func (engine Engine) putOne(ctx context.Context, client *awss3.Client, provider *hosting.Provider, cfg *settings, file *hosting.File, w io.Writer) error {
+func (engine Engine) putOne(ctx context.Context, client *awss3.Client, provider *hosting.HostingProvider, cfg *settings, file *hosting.File, w io.Writer) error {
 	key := file.RelPath()
 	destination := provider.DestinationURL(key)
 
@@ -289,13 +372,13 @@ func normalizeETag(etag string) string {
 }
 
 // newClient builds the S3 client. Credentials are resolved from the provider's
-// Secrets through runtime.
-func (engine Engine) newClient(ctx context.Context, runtime *session.Session, provider *hosting.Provider, settings *settings) (*awss3.Client, error) {
+// Secrets through secretProviders.
+func (engine Engine) newClient(ctx context.Context, secretProviders hosting.SecretsProviders, provider *hosting.HostingProvider, settings *settings) (*awss3.Client, error) {
 	access, err := provider.Secrets.Get(secretAccessKeyID)
 	if err != nil {
 		return nil, err
 	}
-	accessValue, err := runtime.ResolveSecret(ctx, access.LookupKey())
+	accessValue, err := secretProviders.Resolve(ctx, access.LookupKey())
 	if err != nil {
 		return nil, fmt.Errorf("s3: %s: %w", secretAccessKeyID, err)
 	}
@@ -303,7 +386,7 @@ func (engine Engine) newClient(ctx context.Context, runtime *session.Session, pr
 	if err != nil {
 		return nil, err
 	}
-	secretValue, err := runtime.ResolveSecret(ctx, secret.LookupKey())
+	secretValue, err := secretProviders.Resolve(ctx, secret.LookupKey())
 	if err != nil {
 		return nil, fmt.Errorf("s3: %s: %w", secretSecretAccessKey, err)
 	}

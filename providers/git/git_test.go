@@ -6,6 +6,8 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,13 +16,17 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/herdworks/hyperproviders-go/hosting"
+	hosting "github.com/herdworks/hyperproviders-go"
 	"github.com/herdworks/hyperproviders-go/providers/files"
-	"github.com/herdworks/hyperproviders-go/secrets"
-	"github.com/herdworks/hyperproviders-go/session"
+	"github.com/herdworks/hyperproviders-go/providers/runtime"
 	stdssh "golang.org/x/crypto/ssh"
 )
+
+func runtimeSecretProviders(secrets runtime.Secrets) hosting.SecretsProviders {
+	return hosting.SecretsProviders{runtime.New(secrets)}
+}
 
 // setupLocalRemote creates a bare git repo that serves as the remote for
 // provider tests. Returns its file:// URL.
@@ -47,10 +53,10 @@ func seedSource(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-func newProvider(t *testing.T, remote string) *hosting.Provider {
+func newProvider(t *testing.T, remote string) *hosting.HostingProvider {
 	t.Helper()
 
-	return &hosting.Provider{
+	return &hosting.HostingProvider{
 		Kind:     Kind,
 		Endpoint: remote,
 		Config: map[string]any{
@@ -59,6 +65,10 @@ func newProvider(t *testing.T, remote string) *hosting.Provider {
 			"author_email": "test@example.com",
 		},
 	}
+}
+
+func deploy(ctx context.Context, provider *hosting.HostingProvider, root string, secretProviders hosting.SecretsProviders, kind hosting.DeploymentKind, w io.Writer) error {
+	return (&hosting.Deployment{Providers: hosting.HostingProviders{"test": provider}, Path: root, Kind: kind}).Execute(ctx, secretProviders, w)
 }
 
 func TestGitProvider_FirstDeploy(t *testing.T) {
@@ -70,7 +80,7 @@ func TestGitProvider_FirstDeploy(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -95,7 +105,7 @@ func TestGitProvider_FirstDeployToMissingBranchDoesNotTouchExistingBranch(t *tes
 	seedSource(t, mainSource, map[string]string{"README.md": "main branch"})
 
 	mainProvider := newProvider(t, remote)
-	if err := mainProvider.Deploy(context.Background(), mainSource, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), mainProvider, mainSource, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("seed main Deploy: %v", err)
 	}
 
@@ -104,7 +114,7 @@ func TestGitProvider_FirstDeployToMissingBranchDoesNotTouchExistingBranch(t *tes
 
 	publicProvider := newProvider(t, remote)
 	publicProvider.Config["branch"] = "public"
-	if err := publicProvider.Deploy(context.Background(), publicSource, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), publicProvider, publicSource, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("public Deploy: %v", err)
 	}
 
@@ -143,14 +153,120 @@ func TestGitProvider_SecondDeployIsNoOpWhenUnchanged(t *testing.T) {
 	seedSource(t, source, map[string]string{"index.html": "<h1>home</h1>"})
 
 	p := newProvider(t, remote)
-	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("first Deploy: %v", err)
 	}
 
 	// Second deploy with identical content should be a no-op.
-	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("second Deploy: %v", err)
 	}
+}
+
+func TestGitProvider_PreconditionReplacesFinalTreeInOneCommit(t *testing.T) {
+	remote := setupLocalRemote(t)
+	provider := newProvider(t, remote)
+	seed := t.TempDir()
+	seedSource(t, seed, map[string]string{"index.html": "old page", "revision.json": "old revision"})
+	if err := deploy(context.Background(), provider, seed, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+		t.Fatalf("seed Deploy: %v", err)
+	}
+
+	next := t.TempDir()
+	seedSource(t, next, map[string]string{
+		"index.html":           "new page",
+		".deployment/expected": "old revision",
+		".deployment/pending":  "new revision",
+		".deployment.json":     `{"preconditions":[{"target":"revision.json","expected":".deployment/expected","contents":".deployment/pending"}]}`,
+	})
+	if err := deploy(context.Background(), provider, next, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+		t.Fatalf("conditional Deploy: %v", err)
+	}
+
+	verify := cloneBranch(t, remote)
+	for rel, want := range map[string]string{"index.html": "new page", "revision.json": "new revision"} {
+		got, err := os.ReadFile(filepath.Join(verify, rel))
+		if err != nil || string(got) != want {
+			t.Fatalf("%s = %q, %v; want %q", rel, got, err, want)
+		}
+	}
+	if got := branchCommitCount(t, remote); got != 2 {
+		t.Fatalf("commit count = %d, want 2", got)
+	}
+}
+
+func TestGitProvider_PreconditionCreateOnlyAndMismatch(t *testing.T) {
+	remote := setupLocalRemote(t)
+	provider := newProvider(t, remote)
+	seed := t.TempDir()
+	seedSource(t, seed, map[string]string{"index.html": "old page"})
+	if err := deploy(context.Background(), provider, seed, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+		t.Fatalf("seed Deploy: %v", err)
+	}
+
+	create := t.TempDir()
+	seedSource(t, create, map[string]string{
+		"index.html":          "created page",
+		".deployment/pending": "created revision",
+		".deployment.json":    `{"preconditions":[{"target":"revision.json","contents":".deployment/pending"}]}`,
+	})
+	if err := deploy(context.Background(), provider, create, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+		t.Fatalf("create-only Deploy: %v", err)
+	}
+
+	mismatch := t.TempDir()
+	seedSource(t, mismatch, map[string]string{
+		"index.html":           "should not publish",
+		".deployment/expected": "wrong revision",
+		".deployment/pending":  "replacement revision",
+		".deployment.json":     `{"preconditions":[{"target":"revision.json","expected":".deployment/expected","contents":".deployment/pending"}]}`,
+	})
+	err := deploy(context.Background(), provider, mismatch, nil, hosting.CompleteDeployment, io.Discard)
+	if !errors.Is(err, hosting.ErrDeploymentPreconditionFailed) {
+		t.Fatalf("mismatched Deploy error = %v, want precondition failure", err)
+	}
+
+	verify := cloneBranch(t, remote)
+	for rel, want := range map[string]string{"index.html": "created page", "revision.json": "created revision"} {
+		got, err := os.ReadFile(filepath.Join(verify, rel))
+		if err != nil || string(got) != want {
+			t.Fatalf("%s = %q, %v; want %q", rel, got, err, want)
+		}
+	}
+	if got := branchCommitCount(t, remote); got != 2 {
+		t.Fatalf("commit count after mismatch = %d, want 2", got)
+	}
+}
+
+func cloneBranch(t *testing.T, remote string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := git.PlainClone(dir, false, &git.CloneOptions{URL: remote, ReferenceName: plumbing.NewBranchReferenceName("main")}); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func branchCommitCount(t *testing.T, remote string) int {
+	t.Helper()
+	repo, err := git.PlainOpen(strings.TrimPrefix(remote, "file://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repo.Reference(plumbing.NewBranchReferenceName("main"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iter, err := repo.Log(&git.LogOptions{From: head.Hash()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+	count := 0
+	if err := iter.ForEach(func(*object.Commit) error { count++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 
 func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
@@ -162,7 +278,7 @@ func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("seed Deploy: %v", err)
 	}
 
@@ -172,7 +288,7 @@ func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
 		"about/x.html": "<h1>about</h1>",
 	})
 	p.Config["publish_dir"] = "public"
-	if err := p.Deploy(context.Background(), nextSource, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), p, nextSource, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -209,7 +325,7 @@ func TestGitProvider_OverlayDeployPreservesExistingBranchFiles(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("seed Deploy: %v", err)
 	}
 
@@ -218,7 +334,7 @@ func TestGitProvider_OverlayDeployPreservesExistingBranchFiles(t *testing.T) {
 		"index.html":           "<h1>updated home</h1>",
 		"posts/new/index.html": "<h1>new</h1>",
 	})
-	if err := p.Deploy(context.Background(), partialSource, nil, hosting.DeploymentModeOverlay, nil); err != nil {
+	if err := deploy(context.Background(), p, partialSource, nil, hosting.IncrementalDeployment, nil); err != nil {
 		t.Fatalf("overlay Deploy: %v", err)
 	}
 
@@ -249,14 +365,14 @@ func TestGitProvider_OverlayDeployRequiresExistingBranch(t *testing.T) {
 	seedSource(t, source, map[string]string{"index.html": "<h1>home</h1>"})
 
 	p := newProvider(t, remote)
-	err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeOverlay, nil)
+	err := deploy(context.Background(), p, source, nil, hosting.IncrementalDeployment, nil)
 	if err == nil {
 		t.Fatal("Deploy() error = nil, want overlay missing branch error")
 	}
 	if !strings.Contains(err.Error(), "overlay deployment requires existing remote branch") {
 		t.Fatalf("Deploy() error = %v, want overlay missing branch error", err)
 	}
-	if err := p.Deploy(context.Background(), source, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("replacement Deploy after failed overlay: %v", err)
 	}
 }
@@ -281,10 +397,10 @@ func TestGitProvider_SerializesSameRemoteBranchDeploys(t *testing.T) {
 	errs := make(chan error, 2)
 	for _, deploy := range []func() error{
 		func() error {
-			return pages.DeployNamed(context.Background(), "pages", pagesSource, nil, hosting.DeploymentModeReplacement, nil)
+			return deploy(context.Background(), pages, pagesSource, nil, hosting.CompleteDeployment, nil)
 		},
 		func() error {
-			return assets.DeployNamed(context.Background(), "assets", assetsSource, nil, hosting.DeploymentModeReplacement, nil)
+			return deploy(context.Background(), assets, assetsSource, nil, hosting.CompleteDeployment, nil)
 		},
 	} {
 		wg.Add(1)
@@ -381,9 +497,9 @@ func TestGitProvider_ReadyFileRemoteNeedsNoAuth(t *testing.T) {
 
 func TestGitProvider_ReadyHTTPRequiresRuntimeToken(t *testing.T) {
 	p := newProvider(t, "https://example.com/repo.git")
-	p.Secrets = secrets.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
+	p.Secrets = hosting.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
 
-	err := p.Ready(context.Background(), &session.Session{})
+	err := p.Ready(context.Background(), nil)
 	if err == nil {
 		t.Fatal("Ready error = nil, want missing token")
 	}
@@ -394,24 +510,20 @@ func TestGitProvider_ReadyHTTPRequiresRuntimeToken(t *testing.T) {
 
 func TestGitProvider_ReadyHTTPWithRuntimeToken(t *testing.T) {
 	p := newProvider(t, "https://example.com/repo.git")
-	p.Secrets = secrets.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
-	runtime := &session.Session{
-		Secrets: secrets.Values{"GIT_TOKEN": secrets.String("secret")},
-	}
+	p.Secrets = hosting.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"GIT_TOKEN": hosting.StringSecret("secret")})
 
-	if err := p.Ready(context.Background(), runtime); err != nil {
+	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
 }
 
 func TestGitProvider_ReadySSHRequiresPrivateKey(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = secrets.Secrets{{Name: "ssh_key_path", Key: "DEPLOY_SSH_KEY"}}
-	runtime := &session.Session{
-		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String("/tmp/deploy_key")},
-	}
+	p.Secrets = hosting.Secrets{{Name: "ssh_key_path", Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret("/tmp/deploy_key")})
 
-	err := p.Ready(context.Background(), runtime)
+	err := p.Ready(context.Background(), secretProviders)
 	if err == nil {
 		t.Fatal("Ready error = nil, want missing ssh_private_key")
 	}
@@ -422,12 +534,10 @@ func TestGitProvider_ReadySSHRequiresPrivateKey(t *testing.T) {
 
 func TestGitProvider_ReadySSHWithRuntimePrivateKey(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
-	runtime := &session.Session{
-		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
-	}
+	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
 
-	if err := p.Ready(context.Background(), runtime); err != nil {
+	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
 
@@ -435,7 +545,7 @@ func TestGitProvider_ReadySSHWithRuntimePrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSettings: %v", err)
 	}
-	auth, err := resolveAuth(context.Background(), runtime, cfg, p.Secrets)
+	auth, err := resolveAuth(context.Background(), secretProviders, cfg, p.Secrets)
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -456,12 +566,10 @@ func TestGitProvider_ReadySSHWithFilesPrivateKey(t *testing.T) {
 	}
 
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: keyPath}}
-	runtime := &session.Session{
-		SecretProviders: []secrets.Provider{files.New()},
-	}
+	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: keyPath}}
+	secretProviders := hosting.SecretsProviders{files.New()}
 
-	if err := p.Ready(context.Background(), runtime); err != nil {
+	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
 }
@@ -469,12 +577,10 @@ func TestGitProvider_ReadySSHWithFilesPrivateKey(t *testing.T) {
 func TestGitProvider_ReadySSHWithKnownHosts(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
 	p.Config["known_hosts"] = testKnownHostsLine(t)
-	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
-	runtime := &session.Session{
-		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
-	}
+	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
 
-	if err := p.Ready(context.Background(), runtime); err != nil {
+	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
 }
@@ -482,12 +588,10 @@ func TestGitProvider_ReadySSHWithKnownHosts(t *testing.T) {
 func TestGitProvider_ReadySSHRejectsInvalidKnownHosts(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
 	p.Config["known_hosts"] = "not known_hosts"
-	p.Secrets = secrets.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
-	runtime := &session.Session{
-		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
-	}
+	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
 
-	err := p.Ready(context.Background(), runtime)
+	err := p.Ready(context.Background(), secretProviders)
 	if err == nil {
 		t.Fatal("Ready error = nil, want known_hosts error")
 	}
@@ -498,15 +602,13 @@ func TestGitProvider_ReadySSHRejectsInvalidKnownHosts(t *testing.T) {
 
 func TestGitProvider_ReadySSHReportsMissingPassphrase(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = secrets.Secrets{
+	p.Secrets = hosting.Secrets{
 		{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"},
 		{Name: secretSSHPassphrase, Key: "DEPLOY_SSH_PASSPHRASE"},
 	}
-	runtime := &session.Session{
-		Secrets: secrets.Values{"DEPLOY_SSH_KEY": secrets.String(testSSHPrivateKeyPEM(t))},
-	}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
 
-	err := p.Ready(context.Background(), runtime)
+	err := p.Ready(context.Background(), secretProviders)
 	if err == nil {
 		t.Fatal("Ready error = nil, want missing passphrase")
 	}
@@ -561,7 +663,7 @@ func TestGitProvider_TagEnabled(t *testing.T) {
 	p.Config["tag_prefix"] = "build-"
 
 	ctx := WithBuildID(context.Background(), "abc123")
-	if err := p.Deploy(ctx, source, nil, hosting.DeploymentModeReplacement, nil); err != nil {
+	if err := deploy(ctx, p, source, nil, hosting.CompleteDeployment, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -601,7 +703,7 @@ func TestGitProvider_UnmarshalHostingProvider(t *testing.T) {
 			"branch": "main"
 		}
 	}`)
-	var p hosting.Provider
+	var p hosting.HostingProvider
 	if err := json.Unmarshal(raw, &p); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}

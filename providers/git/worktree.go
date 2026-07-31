@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,8 +14,57 @@ import (
 	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/herdworks/hyperproviders-go/hosting"
+	hosting "github.com/herdworks/hyperproviders-go"
 )
+
+func validatePrecondition(wt *git.Worktree, publishDir string, condition hosting.PreconditionFile) error {
+	rel := repoPath(publishDir, condition.Target)
+	current, err := wt.Filesystem.Open(rel)
+	if condition.Expected == nil {
+		if err == nil {
+			_ = current.Close()
+			return fmt.Errorf("%w: target %q already exists", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("git: read precondition target %s: %w", condition.Target, err)
+		}
+	} else {
+		if err != nil {
+			return fmt.Errorf("%w: target %q does not exist", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+		}
+		actual, readErr := io.ReadAll(current)
+		closeErr := current.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if !bytes.Equal(actual, condition.Expected) {
+			return fmt.Errorf("%w: target %q differs from expected contents", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+		}
+	}
+	return nil
+}
+
+func materializePrecondition(wt *git.Worktree, publishDir string, condition hosting.PreconditionFile) error {
+	rel := repoPath(publishDir, condition.Target)
+	if err := wt.Filesystem.MkdirAll(path.Dir(rel), 0o755); err != nil {
+		return err
+	}
+	dst, err := wt.Filesystem.Create(rel)
+	if err != nil {
+		return err
+	}
+	if _, err := dst.Write(condition.Content); err != nil {
+		_ = dst.Close()
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	return nil
+}
 
 // openOrClone opens the repository at workdir if it exists, or clones it from
 // remote otherwise. Returns (repo, worktree, firstDeploy, err). firstDeploy

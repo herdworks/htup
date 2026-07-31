@@ -1,4 +1,4 @@
-package hosting
+package hyperproviders
 
 import (
 	"bytes"
@@ -68,7 +68,7 @@ func TestBeginDeployment_WritesGeneratedLogFile(t *testing.T) {
 
 	ctx := WithDeploymentRoot(context.Background(), root)
 	ctx, w, finish := BeginDeployment(ctx, "production", &buf)
-	LogProvider(w, ctx, &Provider{Kind: "s3"}, "hosting", "assets", "ready")
+	LogProvider(w, ctx, &HostingProvider{Kind: "s3"}, "hosting", "assets", "ready")
 	finish(nil)
 
 	entries, err := os.ReadDir(filepath.Join(root, ProviderWorkspaceDir, "logs"))
@@ -91,9 +91,9 @@ func TestProviderLogsQuoteValues(t *testing.T) {
 	var buf bytes.Buffer
 
 	file := mkFile(t, t.TempDir(), "blog/index.html")
-	provider := &Provider{Kind: "s3"}
+	provider := &HostingProvider{Kind: "s3"}
 	ctx, w, finish := BeginDeployment(context.Background(), "production", &buf)
-	ctx = WithProviderName(ctx, "assets")
+	ctx = withProviderName(ctx, "assets")
 	LogProvider(w, ctx, provider, "hosting", "assets", "ready")
 	LogSecret(w, ctx, provider, "access_key_id", "found")
 	LogFile(w, ctx, provider, file, "included")

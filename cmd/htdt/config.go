@@ -16,9 +16,9 @@ import (
 
 // Config is the top-level htdt configuration.
 type Config struct {
-	Version      int                               `json:"version"      yaml:"version"`
-	Providers    hp.HostingProviders               `json:"providers"    yaml:"providers"`
-	Environments map[string]*hp.HostingEnvironment `json:"environments" yaml:"environments"`
+	Version      int                        `json:"version"      yaml:"version"`
+	Providers    hp.HostingProviders        `json:"providers"    yaml:"providers"`
+	Environments map[string]*hp.Environment `json:"environments" yaml:"environments"`
 }
 
 // LoadConfig reads and parses a JSON or YAML config file.
@@ -48,7 +48,7 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // Environment returns the environment with the given name.
-func (c *Config) Environment(name string) (*hp.HostingEnvironment, error) {
+func (c *Config) Environment(name string) (*hp.Environment, error) {
 	env, ok := c.Environments[name]
 	if !ok {
 		return nil, fmt.Errorf("environment %q not found in config", name)
@@ -59,10 +59,8 @@ func (c *Config) Environment(name string) (*hp.HostingEnvironment, error) {
 	return env, nil
 }
 
-// Session returns the default htdt session. The CLI resolves secrets from OS
-// environment variables because config files are durable project state.
-func Session() *hp.Session {
-	return &hp.Session{
-		SecretProviders: []hp.SecretProvider{env.New()},
-	}
+// SecretProviders returns the default htdt secret providers. The CLI resolves
+// secrets from OS environment variables because config files are durable project state.
+func SecretProviders() hp.SecretsProviders {
+	return hp.SecretsProviders{env.New()}
 }

@@ -1,4 +1,4 @@
-package hosting
+package hyperproviders
 
 import (
 	"context"
@@ -9,10 +9,6 @@ import (
 	"sync"
 	"time"
 )
-
-type deployLogContextKey struct{}
-type deploymentRootContextKey struct{}
-type providerNameContextKey struct{}
 
 type deployLogState struct {
 	environment string
@@ -26,6 +22,10 @@ type synchronizedWriter struct {
 	mu sync.Mutex
 	w  io.Writer
 }
+
+type deployLogContextKey struct{}
+type deploymentRootContextKey struct{}
+type providerNameContextKey struct{}
 
 func (w *synchronizedWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
@@ -88,7 +88,7 @@ func WithDeploymentRoot(ctx context.Context, root string) context.Context {
 }
 
 // LogProvider writes one provider-scoped line.
-func LogProvider(w io.Writer, ctx context.Context, provider *Provider, resource, name, state string) {
+func LogProvider(w io.Writer, ctx context.Context, provider *HostingProvider, resource, name, state string) {
 	if !deployLogActive(ctx) {
 		return
 	}
@@ -100,12 +100,12 @@ func LogProvider(w io.Writer, ctx context.Context, provider *Provider, resource,
 
 // LogSecret writes one provider-scoped secret resolution line. It logs only the
 // configured secret name, never the secret value.
-func LogSecret(w io.Writer, ctx context.Context, provider *Provider, name, state string) {
+func LogSecret(w io.Writer, ctx context.Context, provider *HostingProvider, name, state string) {
 	LogProvider(w, ctx, provider, "secret", name, state)
 }
 
 // LogFile writes one provider-scoped source file decision line.
-func LogFile(w io.Writer, ctx context.Context, provider *Provider, file *File, state string) {
+func LogFile(w io.Writer, ctx context.Context, provider *HostingProvider, file *File, state string) {
 	if file == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func LogFile(w io.Writer, ctx context.Context, provider *Provider, file *File, s
 }
 
 // LogResource writes one provider-scoped destination resource line.
-func LogResource(w io.Writer, ctx context.Context, provider *Provider, destination, mimetype, state string) {
+func LogResource(w io.Writer, ctx context.Context, provider *HostingProvider, destination, mimetype, state string) {
 	if !deployLogActive(ctx) {
 		return
 	}
@@ -123,8 +123,8 @@ func LogResource(w io.Writer, ctx context.Context, provider *Provider, destinati
 	fmt.Fprintf(deploymentWriter(ctx, w), "%s resource %q type %q %s\n", providerLogPrefix(ctx, provider), destination, mimetype, state)
 }
 
-// WithProviderName attaches the selected provider name to ctx for provider logs.
-func WithProviderName(ctx context.Context, name string) context.Context {
+// withProviderName attaches the selected provider name to ctx for provider logs.
+func withProviderName(ctx context.Context, name string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -136,7 +136,7 @@ func WithProviderName(ctx context.Context, name string) context.Context {
 
 // ProviderName returns the selected provider name from ctx, falling back to the
 // provider's direct display name.
-func ProviderName(ctx context.Context, provider *Provider) string {
+func ProviderName(ctx context.Context, provider *HostingProvider) string {
 	if ctx != nil {
 		if name, ok := ctx.Value(providerNameContextKey{}).(string); ok && name != "" {
 			return name
@@ -148,7 +148,7 @@ func ProviderName(ctx context.Context, provider *Provider) string {
 	return provider.DisplayName()
 }
 
-func providerLogPrefix(ctx context.Context, provider *Provider) string {
+func providerLogPrefix(ctx context.Context, provider *HostingProvider) string {
 	if provider == nil {
 		return "[provider//]"
 	}

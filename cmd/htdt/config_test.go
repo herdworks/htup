@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	hp "github.com/herdworks/hyperproviders-go"
 )
 
 func TestLoadConfig_JSON(t *testing.T) {
@@ -29,6 +32,21 @@ func TestLoadConfig_JSON(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	assertLoadedConfig(t, cfg)
+}
+
+func TestRenderPlan(t *testing.T) {
+	provider := &hp.HostingProvider{Kind: "test", Endpoint: "https://example.com"}
+	var output bytes.Buffer
+	renderPlan(&output, hp.HostingProviders{"production": provider}, hp.DeploymentPlan{
+		Sequential: []hp.DeploymentOperation{{
+			HostingProvider: provider,
+			Preconditions:   []hp.PreconditionFile{{Target: "revision.json"}},
+		}},
+		Concurrent: []hp.DeploymentOperation{{HostingProvider: provider}},
+	})
+	if got, want := output.String(), "plan sequential provider \"production\": 1 preconditions, 0 bulk, 0 enqueued\n  precondition revision.json\nplan concurrent provider \"production\": 0 preconditions, 0 bulk, 0 enqueued\n"; got != want {
+		t.Fatalf("renderPlan() = %q, want %q", got, want)
+	}
 }
 
 func TestLoadConfig_YAML(t *testing.T) {

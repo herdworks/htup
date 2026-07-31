@@ -5,14 +5,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/herdworks/hyperproviders-go/secrets"
+	hyperproviders "github.com/herdworks/hyperproviders-go"
 )
 
-func TestProvider_Resolve(t *testing.T) {
-	provider := New()
-	value, err := provider.Resolve(context.Background(), secrets.Values{
-		"TEST": secrets.String("secret"),
-	}, "TEST")
+func TestProviderResolve(t *testing.T) {
+	values := Secrets{"TEST": hyperproviders.StringSecret("secret")}
+	provider := New(values)
+	values["TEST"][0] = 'x'
+
+	value, err := provider.Resolve(context.Background(), "TEST")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -21,10 +22,16 @@ func TestProvider_Resolve(t *testing.T) {
 	}
 }
 
-func TestProvider_ResolveMissing(t *testing.T) {
-	provider := New()
-	_, err := provider.Resolve(context.Background(), nil, "TEST")
-	if !errors.Is(err, secrets.ErrNotFound) {
-		t.Fatalf("Resolve err = %v, want ErrNotFound", err)
+func TestProviderResolveMissing(t *testing.T) {
+	_, err := New(nil).Resolve(context.Background(), "TEST")
+	if !errors.Is(err, hyperproviders.ErrSecretNotFound) {
+		t.Fatalf("Resolve err = %v, want ErrSecretNotFound", err)
+	}
+}
+
+func TestProviderResolveEmpty(t *testing.T) {
+	_, err := New(Secrets{"TEST": nil}).Resolve(context.Background(), "TEST")
+	if !errors.Is(err, hyperproviders.ErrSecretEmpty) {
+		t.Fatalf("Resolve err = %v, want ErrSecretEmpty", err)
 	}
 }

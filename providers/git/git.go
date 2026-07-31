@@ -1,4 +1,4 @@
-// Package git implements a hyperproviders.HostingProviderEngine that publishes
+// Package git implements a hyperproviders HostingEngine that publishes
 // files to a git remote (HTTPS or SSH). It uses go-git/v5 for pure-Go git
 // operations: fetch, hard-reset to origin/<branch>, overwrite working tree,
 // stage, commit, optionally tag, push.
@@ -27,8 +27,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/herdworks/hyperproviders-go/hosting"
-	"github.com/herdworks/hyperproviders-go/session"
+	hosting "github.com/herdworks/hyperproviders-go"
 )
 
 const (
@@ -95,7 +94,7 @@ type providerConfig struct {
 	PublishDir string `json:"publish_dir,omitempty" yaml:"publish_dir,omitempty"`
 }
 
-func newSettings(provider *hosting.Provider) (*settings, error) {
+func newSettings(provider *hosting.HostingProvider) (*settings, error) {
 	cfg := &settings{}
 	if len(provider.Config) > 0 {
 		if _, ok := provider.Config["cache_dir"]; ok {
@@ -162,26 +161,23 @@ func normalizePublishDir(dir string) (string, error) {
 }
 
 // Validate validates Git-specific configuration.
-func (Engine) Validate(provider *hosting.Provider) error {
+func (Engine) Validate(provider *hosting.HostingProvider) error {
 	_, err := validateSettings(provider)
 	return err
 }
 
 // Ready validates Git configuration and confirms local auth material can be
 // resolved and parsed. It intentionally does not contact the remote.
-func (Engine) Ready(ctx context.Context, runtime *session.Session, provider *hosting.Provider) error {
-	if runtime == nil {
-		runtime = &session.Session{}
-	}
+func (Engine) Ready(ctx context.Context, secretProviders hosting.SecretsProviders, provider *hosting.HostingProvider) error {
 	cfg, err := validateSettings(provider)
 	if err != nil {
 		return err
 	}
-	_, err = resolveAuth(ctx, runtime, cfg, provider.Secrets)
+	_, err = resolveAuth(ctx, secretProviders, cfg, provider.Secrets)
 	return err
 }
 
-func validateSettings(provider *hosting.Provider) (*settings, error) {
+func validateSettings(provider *hosting.HostingProvider) (*settings, error) {
 	cfg, err := newSettings(provider)
 	if err != nil {
 		return nil, err
@@ -199,15 +195,23 @@ func validateSettings(provider *hosting.Provider) (*settings, error) {
 // deployment mode, stage, commit, optionally tag, push, and optionally prune tags.
 // Replacement mode clears publish_dir first; overlay mode writes and stages only
 // the provided files.
-func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provider *hosting.Provider, root string, files []*hosting.File, mode hosting.DeploymentMode, w io.Writer) error {
-	if err := mode.Validate(); err != nil {
+func (Engine) ValidateOperation(provider *hosting.HostingProvider, operation hosting.DeploymentOperation) error {
+	return nil
+}
+
+func (engine Engine) PerformOperation(ctx context.Context, secretProviders hosting.SecretsProviders, operation hosting.DeploymentOperation, w io.Writer) error {
+	provider := operation.HostingProvider
+	root := operation.Root
+	kind := operation.Kind
+	files := append(append([]*hosting.File{}, operation.Bulk...), operation.Enqueued...)
+	if err := kind.Validate(); err != nil {
 		return err
 	}
 	cfg, err := newSettings(provider)
 	if err != nil {
 		return err
 	}
-	auth, err := resolveAuth(ctx, runtime, cfg, provider.Secrets)
+	auth, err := resolveAuth(ctx, secretProviders, cfg, provider.Secrets)
 	if err != nil {
 		return fmt.Errorf("git: auth: %w", err)
 	}
@@ -230,7 +234,7 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		return fmt.Errorf("git: open repo: %w", err)
 	}
 	hosting.LogProvider(w, ctx, provider, "open", remoteResource, "completed")
-	if firstDeploy && mode == hosting.DeploymentModeOverlay {
+	if firstDeploy && kind == hosting.IncrementalDeployment {
 		_ = os.RemoveAll(workdir)
 		return overlayMissingBranchError(cfg.Branch)
 	}
@@ -239,7 +243,7 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		hosting.LogProvider(w, ctx, provider, "fetch", remoteBranch, "starting")
 		if err := fetchOrigin(ctx, repo, auth); err != nil {
 			hosting.LogProvider(w, ctx, provider, "fetch", remoteBranch, "failed")
-			if mode == hosting.DeploymentModeOverlay && isBranchMissing(err) {
+			if kind == hosting.IncrementalDeployment && isBranchMissing(err) {
 				return overlayMissingBranchError(cfg.Branch)
 			}
 			return fmt.Errorf("git: fetch origin: %w", err)
@@ -249,7 +253,7 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		hosting.LogProvider(w, ctx, provider, "reset", remoteBranch, "starting")
 		if err := resetToOrigin(repo, wt, cfg.Branch); err != nil {
 			hosting.LogProvider(w, ctx, provider, "reset", remoteBranch, "failed")
-			if mode == hosting.DeploymentModeOverlay && isBranchMissing(err) {
+			if kind == hosting.IncrementalDeployment && isBranchMissing(err) {
 				return overlayMissingBranchError(cfg.Branch)
 			}
 			return fmt.Errorf("git: reset to origin: %w", err)
@@ -260,10 +264,20 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		hosting.LogProvider(w, ctx, provider, "reset", remoteBranch, "skipped")
 	}
 
-	switch mode {
-	case hosting.DeploymentModeReplacement:
+	for _, condition := range operation.Preconditions {
+		if err := validatePrecondition(wt, cfg.PublishDir, condition); err != nil {
+			return err
+		}
+	}
+	switch kind {
+	case hosting.CompleteDeployment:
 		if err := clearPublishDir(wt.Filesystem, cfg.PublishDir); err != nil {
 			return fmt.Errorf("git: clear publish dir: %w", err)
+		}
+		for _, condition := range operation.Preconditions {
+			if err := materializePrecondition(wt, cfg.PublishDir, condition); err != nil {
+				return err
+			}
 		}
 		if err := copyFiles(wt.Filesystem, cfg.PublishDir, files); err != nil {
 			return fmt.Errorf("git: write files: %w", err)
@@ -271,12 +285,22 @@ func (engine Engine) Deploy(ctx context.Context, runtime *session.Session, provi
 		if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
 			return fmt.Errorf("git: stage: %w", err)
 		}
-	case hosting.DeploymentModeOverlay:
+	case hosting.IncrementalDeployment:
+		for _, condition := range operation.Preconditions {
+			if err := materializePrecondition(wt, cfg.PublishDir, condition); err != nil {
+				return err
+			}
+		}
 		if err := copyFiles(wt.Filesystem, cfg.PublishDir, files); err != nil {
 			return fmt.Errorf("git: write files: %w", err)
 		}
 		if err := stageFiles(wt, cfg.PublishDir, files); err != nil {
 			return fmt.Errorf("git: stage: %w", err)
+		}
+		for _, condition := range operation.Preconditions {
+			if _, err := wt.Add(repoPath(cfg.PublishDir, condition.Target)); err != nil {
+				return fmt.Errorf("git: stage precondition %s: %w", condition.Target, err)
+			}
 		}
 	}
 	status, err := wt.Status()
@@ -381,7 +405,7 @@ func (cfg *settings) commitMessage(buildID string) string {
 	return fmt.Sprintf("deploy %s", buildID)
 }
 
-func logResourceChanges(ctx context.Context, provider *hosting.Provider, publishDir string, files []*hosting.File, status git.Status, w io.Writer) error {
+func logResourceChanges(ctx context.Context, provider *hosting.HostingProvider, publishDir string, files []*hosting.File, status git.Status, w io.Writer) error {
 	included := make(map[string]*hosting.File, len(files))
 	for _, file := range files {
 		included[repoPath(publishDir, file.RelPath())] = file

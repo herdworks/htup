@@ -1,4 +1,4 @@
-package hosting
+package hyperproviders
 
 import (
 	"errors"
@@ -47,28 +47,12 @@ func TestFile_Metadata(t *testing.T) {
 		t.Fatalf("NewFile: %v", err)
 	}
 
-	size, err := f.Size()
-	if err != nil {
-		t.Fatalf("Size: %v", err)
-	}
-	if size != int64(len(content)) {
-		t.Errorf("Size = %d, want %d", size, len(content))
-	}
-
 	mime, err := f.Mimetype()
 	if err != nil {
 		t.Fatalf("Mimetype: %v", err)
 	}
 	if !strings.HasPrefix(mime, "text/html") {
 		t.Errorf("Mimetype = %q, want text/html prefix", mime)
-	}
-
-	hash, err := f.Hash()
-	if err != nil {
-		t.Fatalf("Hash: %v", err)
-	}
-	if len(hash) != 64 {
-		t.Errorf("Hash length = %d, want 64 (sha-256 hex)", len(hash))
 	}
 
 	etag, err := f.ETag()
@@ -112,8 +96,8 @@ func TestFile_RejectsSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := newFile(root, link); !errors.Is(err, ErrSymlink) {
-		t.Fatalf("newFile symlink error = %v, want ErrSymlink", err)
+	if _, err := newFile(root, link); !errors.Is(err, ErrFileSymlink) {
+		t.Fatalf("newFile symlink error = %v, want ErrFileSymlink", err)
 	}
 }
 
@@ -135,7 +119,7 @@ func TestWalk_DeterministicAndRelative(t *testing.T) {
 		}
 	}
 
-	files, err := walk(root)
+	files, err := walk(root, nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -181,7 +165,7 @@ func TestWalk_IgnoresProviderWorkspaceDir(t *testing.T) {
 		}
 	}
 
-	files, err := walk(root)
+	files, err := walk(root, nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -219,7 +203,15 @@ func TestWalk_AppliesDeploymentIgnore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, err := walk(root)
+	instructions, err := LoadDeploymentInstructions(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignore, err := deploymentIgnore(root, instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := walk(root, ignore)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -250,12 +242,12 @@ func TestProvider_DeploymentFilesAppliesDeploymentIgnoreBeforeProviderFilter(t *
 		t.Fatal(err)
 	}
 
-	provider := &Provider{
+	provider := &HostingProvider{
 		Kind:     "deploymentignore-test",
 		Endpoint: "https://example.com",
 		Include:  FilterRules{Paths: []string{`\.log$`}},
 	}
-	files, err := provider.DeploymentFiles(root)
+	files, err := providerFiles(root, provider)
 	if err != nil {
 		t.Fatalf("DeploymentFiles: %v", err)
 	}
@@ -274,8 +266,8 @@ func TestWalk_RejectsSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := walk(root); !errors.Is(err, ErrSymlink) {
-		t.Fatalf("walk symlink error = %v, want ErrSymlink", err)
+	if _, err := walk(root, nil); !errors.Is(err, ErrFileSymlink) {
+		t.Fatalf("walk symlink error = %v, want ErrFileSymlink", err)
 	}
 }
 
@@ -292,8 +284,8 @@ func TestWalk_RejectsSymlinkDirectory(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := walk(root); !errors.Is(err, ErrSymlink) {
-		t.Fatalf("walk symlink dir error = %v, want ErrSymlink", err)
+	if _, err := walk(root, nil); !errors.Is(err, ErrFileSymlink) {
+		t.Fatalf("walk symlink dir error = %v, want ErrFileSymlink", err)
 	}
 }
 
@@ -311,12 +303,12 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 		}
 	}
 
-	provider := &Provider{
+	provider := &HostingProvider{
 		Kind:     "file-test",
 		Endpoint: "https://example.com",
 		Exclude:  FilterRules{Paths: []string{`\.git/`}},
 	}
-	files, err := provider.DeploymentFiles(mustAbs(t, root))
+	files, err := providerFiles(mustAbs(t, root), provider)
 	if err != nil {
 		t.Fatalf("DeploymentFiles: %v", err)
 	}
@@ -326,12 +318,12 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 		}
 	}
 
-	provider = &Provider{
+	provider = &HostingProvider{
 		Kind:     "file-test",
 		Endpoint: "https://example.com",
 		Include:  FilterRules{Paths: []string{`\.html$`}},
 	}
-	only, err := provider.DeploymentFiles(root)
+	only, err := providerFiles(root, provider)
 	if err != nil {
 		t.Fatalf("DeploymentFiles: %v", err)
 	}
@@ -342,19 +334,35 @@ func TestProvider_DeploymentFilesFilters(t *testing.T) {
 		t.Errorf("include filter returned %s, want site/a.html", only[0].RelPath())
 	}
 
-	provider = &Provider{
+	provider = &HostingProvider{
 		Kind:     "file-test",
 		Endpoint: "https://example.com",
 		Include:  FilterRules{Paths: []string{`\.html$`}},
 		Exclude:  FilterRules{Paths: []string{`a\.html$`}},
 	}
-	only, err = provider.DeploymentFiles(root)
+	only, err = providerFiles(root, provider)
 	if err != nil {
 		t.Fatalf("DeploymentFiles: %v", err)
 	}
 	if len(only) != 0 {
 		t.Fatalf("exclude should win over include; got %d files", len(only))
 	}
+}
+
+func providerFiles(root string, provider *HostingProvider) ([]*File, error) {
+	instructions, err := LoadDeploymentInstructions(root)
+	if err != nil {
+		return nil, err
+	}
+	ignore, err := deploymentIgnore(root, instructions)
+	if err != nil {
+		return nil, err
+	}
+	files, err := walk(root, ignore)
+	if err != nil {
+		return nil, err
+	}
+	return provider.deploymentFiles(nil, nil, files)
 }
 
 func mustAbs(t *testing.T, path string) string {
