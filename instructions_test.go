@@ -9,7 +9,7 @@ import (
 func TestLoadDeploymentInstructions(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	raw := []byte(`{"preconditions":[{"target":".hypersync/revision.json","contents":".deployment/pending.json"}],"enqueue":[".hypersync/manifests/*.json",".hypersync/revision.json"]}`)
+	raw := []byte(`{"preconditions":[{"target":".hsync/revision.json","contents":".deployment/pending.json"}],"enqueue":[".hsync/manifests/*.json",".hsync/revision.json"]}`)
 	if err := os.WriteFile(filepath.Join(root, DeploymentInstructionsFile), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +17,7 @@ func TestLoadDeploymentInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := instructions.Preconditions[0].Target; got != ".hypersync/revision.json" {
+	if got := instructions.Preconditions[0].Target; got != ".hsync/revision.json" {
 		t.Fatalf("target = %q", got)
 	}
 }

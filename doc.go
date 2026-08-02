@@ -1,6 +1,6 @@
 // Package hyperproviders is the HyperTexting CMS deployment engine.
 //
-// A [Deployment] combines selected [HostingProviders], a root directory, and a
+// A [Deployment] combines provider selection, a payload directory, and a
 // [DeploymentKind]. It owns planning, file discovery, filtering, secret
 // resolution, and provider fan-out. Each provider delegates provider-specific
 // behavior to a registered [HostingEngine]. Every file's deployment path is computed relative to the

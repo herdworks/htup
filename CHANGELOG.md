@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added config-backed `Deployment` setup: callers provide a regular YAML or JSON `ConfigPath`, an independent `PayloadPath`, and either explicit providers or a named configured environment. `ConfigBytes` supports an immutable caller-provided configuration snapshot while the path remains validated.
+* Changed `htdt deploy` to resolve its selected environment through `Deployment` and to pass the config path and payload path separately.
+
 ## v0.24.0 (2026-07-31)
 
 * Added declarative `Deployment` planning and execution. `Prepare` loads a build root's `.deployment.json`, resolves ignore and enqueue rules, materializes preconditions, and exposes read-only `Instructions`, `Plan`, and `Status` snapshots; `Execute` checks all selected providers before applying sequential conditional operations and concurrent ordinary operations.

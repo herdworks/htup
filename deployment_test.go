@@ -20,6 +20,15 @@ type fakeProviderEngine struct {
 	names []string
 }
 
+func deploymentTestConfig(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "site.yaml")
+	if err := os.WriteFile(path, []byte("title: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func (*fakeProviderEngine) Validate(*HostingProvider) error { return nil }
 func (*fakeProviderEngine) Ready(context.Context, SecretsProviders, *HostingProvider) error {
 	return nil
@@ -55,7 +64,7 @@ func TestDeploymentPrepareMaterializesOneOperationPerProvider(t *testing.T) {
 	a, b := &fakeProviderEngine{}, &fakeProviderEngine{}
 	RegisterEngine("operation-a", a)
 	RegisterEngine("operation-b", b)
-	d := &Deployment{Providers: HostingProviders{"z": {Kind: "operation-b", Endpoint: "https://z", Include: FilterRules{Types: []string{"^application/json$"}}}, "a": {Kind: "operation-a", Endpoint: "https://a", Include: FilterRules{Types: []string{"^application/json$"}}}}, Path: root, Kind: CompleteDeployment}
+	d := &Deployment{ConfigPath: deploymentTestConfig(t, root), Providers: HostingProviders{"z": {Kind: "operation-b", Endpoint: "https://z", Include: FilterRules{Types: []string{"^application/json$"}}}, "a": {Kind: "operation-a", Endpoint: "https://a", Include: FilterRules{Types: []string{"^application/json$"}}}}, PayloadPath: root, Kind: CompleteDeployment}
 	if err := d.Prepare(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +117,42 @@ func TestDeploymentKind_Validate(t *testing.T) {
 	}
 }
 
+func TestDeploymentPrepareSelectsEnvironmentFromConfigSnapshot(t *testing.T) {
+	engine := &fakeProviderEngine{}
+	RegisterEngine("config-snapshot", engine)
+	root := t.TempDir()
+	configPath := filepath.Join(root, "site.yaml")
+	if err := os.WriteFile(configPath, []byte("providers:\n  selected:\n    kind: config-snapshot\n    endpoint: https://example.com\nenvironments:\n  production:\n    - selected\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("page"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("providers: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deployment := &Deployment{ConfigPath: configPath, ConfigBytes: bytes, PayloadPath: root, Environment: "production", Kind: CompleteDeployment}
+	if err := deployment.Prepare(context.Background(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if plan := deployment.Plan(); len(plan.Concurrent) != 1 || plan.Concurrent[0].HostingProvider.Kind != "config-snapshot" {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
+func TestDeploymentPrepareRejectsAmbiguousProviderSelection(t *testing.T) {
+	root := t.TempDir()
+	configPath := deploymentTestConfig(t, root)
+	deployment := &Deployment{ConfigPath: configPath, PayloadPath: root, Providers: HostingProviders{"explicit": {Kind: "operation-a", Endpoint: "https://example.com"}}, Environment: "production", Kind: CompleteDeployment}
+	if err := deployment.Prepare(context.Background(), io.Discard); err == nil {
+		t.Fatal("Prepare() error = nil")
+	}
+}
+
 func TestDeploymentPrepareRejectsUnownedPrecondition(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "pending"), []byte("new"), 0o644); err != nil {
@@ -118,7 +163,7 @@ func TestDeploymentPrepareRejectsUnownedPrecondition(t *testing.T) {
 	}
 	engine := &fakeProviderEngine{}
 	RegisterEngine("unowned", engine)
-	d := &Deployment{Providers: HostingProviders{"only": {Kind: "unowned", Endpoint: "https://only", Include: FilterRules{Paths: []string{"^other/"}}}}, Path: root, Kind: IncrementalDeployment}
+	d := &Deployment{ConfigPath: deploymentTestConfig(t, root), Providers: HostingProviders{"only": {Kind: "unowned", Endpoint: "https://only", Include: FilterRules{Paths: []string{"^other/"}}}}, PayloadPath: root, Kind: IncrementalDeployment}
 	if err := d.Prepare(context.Background(), nil); err == nil {
 		t.Fatal("Prepare error = nil")
 	}
@@ -134,7 +179,7 @@ func TestDeploymentExecuteReadinessFailureDoesNotPerform(t *testing.T) {
 	}
 	engine := &notReadyOperationEngine{}
 	RegisterEngine("not-ready-operation", engine)
-	d := &Deployment{Providers: HostingProviders{"only": {Kind: "not-ready-operation", Endpoint: "https://only"}}, Path: root, Kind: CompleteDeployment}
+	d := &Deployment{ConfigPath: deploymentTestConfig(t, root), Providers: HostingProviders{"only": {Kind: "not-ready-operation", Endpoint: "https://only"}}, PayloadPath: root, Kind: CompleteDeployment}
 	if err := d.Execute(context.Background(), nil, nil); !errors.Is(err, errNotReadyOperation) {
 		t.Fatalf("Execute error = %v", err)
 	}
@@ -200,7 +245,7 @@ func TestDeploymentExecuteRunsConditionalOperationsBeforeConcurrentOperations(t 
 	release := make(chan struct{})
 	engine := &operationOrderEngine{started: make(chan string, 2), release: release}
 	RegisterEngine("operation-order", engine)
-	deployment := deploymentOrderDeployment(root, "operation-order")
+	deployment := deploymentOrderDeployment(t, root, "operation-order")
 	errs := make(chan error, 1)
 	go func() { errs <- deployment.Execute(context.Background(), nil, io.Discard) }()
 	for i := 0; i < 2; i++ {
@@ -224,7 +269,7 @@ func TestDeploymentExecuteStopsAfterSequentialOperationFailure(t *testing.T) {
 	root := deploymentOrderRoot(t)
 	engine := &operationOrderEngine{fail: "first"}
 	RegisterEngine("operation-order-fail", engine)
-	err := deploymentOrderDeployment(root, "operation-order-fail").Execute(context.Background(), nil, io.Discard)
+	err := deploymentOrderDeployment(t, root, "operation-order-fail").Execute(context.Background(), nil, io.Discard)
 	if err == nil {
 		t.Fatal("Execute error = nil, want sequential failure")
 	}
@@ -252,13 +297,13 @@ func deploymentOrderRoot(t *testing.T) string {
 	return root
 }
 
-func deploymentOrderDeployment(root, kind string) *Deployment {
+func deploymentOrderDeployment(t *testing.T, root, kind string) *Deployment {
 	return &Deployment{Providers: HostingProviders{
 		"first":  {Kind: kind, Endpoint: "https://first", Include: FilterRules{Paths: []string{"^first\\.json$"}}},
 		"second": {Kind: kind, Endpoint: "https://second", Include: FilterRules{Paths: []string{"^second\\.json$"}}},
 		"third":  {Kind: kind, Endpoint: "https://third", Include: FilterRules{Paths: []string{"^none/"}}},
 		"fourth": {Kind: kind, Endpoint: "https://fourth", Include: FilterRules{Paths: []string{"^none/"}}},
-	}, Path: root, Kind: CompleteDeployment}
+	}, ConfigPath: deploymentTestConfig(t, root), PayloadPath: root, Kind: CompleteDeployment}
 }
 
 func TestDeploymentExecuteFansOutWithFilters(t *testing.T) {
@@ -271,7 +316,7 @@ func TestDeploymentExecuteFansOutWithFilters(t *testing.T) {
 	html, image := &fakeProviderEngine{}, &fakeProviderEngine{}
 	RegisterEngine("deployment-html", html)
 	RegisterEngine("deployment-image", image)
-	d := &Deployment{Providers: HostingProviders{"html": {Kind: "deployment-html", Endpoint: "https://html", Include: FilterRules{Types: []string{"^text/html"}}}, "image": {Kind: "deployment-image", Endpoint: "https://image", Include: FilterRules{Types: []string{"^image/"}}}}, Path: root, Kind: CompleteDeployment}
+	d := &Deployment{ConfigPath: deploymentTestConfig(t, root), Providers: HostingProviders{"html": {Kind: "deployment-html", Endpoint: "https://html", Include: FilterRules{Types: []string{"^text/html"}}}, "image": {Kind: "deployment-image", Endpoint: "https://image", Include: FilterRules{Types: []string{"^image/"}}}}, PayloadPath: root, Kind: CompleteDeployment}
 	if err := d.Execute(context.Background(), nil, nil); err != nil {
 		t.Fatal(err)
 	}

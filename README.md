@@ -6,9 +6,10 @@ object storage and Git providers.
 
 ## Declarative deployments
 
-A `Deployment` is the high-level operation. Construct it with the providers
-selected for this attempt, the build root, and whether the build is complete or
-incremental. `Prepare` validates local configuration, loads deployment
+A `Deployment` is the high-level operation. Construct it with a required
+repository-root config path, the build payload root, and either explicitly
+selected providers or an environment name from that config. `Prepare` validates
+local configuration, loads deployment
 instructions, discovers the build once, and materializes an immutable plan. It
 does not resolve credentials or write to a remote service. `Execute` performs
 the prepared plan after every provider passes its readiness check.
@@ -18,46 +19,35 @@ import (
     "context"
 
     hp "github.com/herdworks/hyperproviders-go"
-    "github.com/herdworks/hyperproviders-go/providers/runtime"
-    "github.com/herdworks/hyperproviders-go/providers/s3"
+    envsecrets "github.com/herdworks/hyperproviders-go/providers/env"
+    filesecrets "github.com/herdworks/hyperproviders-go/providers/files"
 )
 
-providers := hp.HostingProviders{
-    "assets": {
-        Kind:     s3.Kind,
-        Endpoint: "https://example.r2.cloudflarestorage.com",
-        BaseURL:  "https://assets.example.com",
-        Config: map[string]any{
-            "bucket": "my-site-assets",
-            "region": "auto",
-        },
-        Secrets: hp.Secrets{
-            {Name: "access_key_id", Key: "R2_ACCESS_KEY_ID"},
-            {Name: "secret_access_key", Key: "R2_SECRET_ACCESS_KEY"},
-        },
-    },
-}
+// initialize secrets providers
+var secrets hp.SecretsProviders = hp.SecretsProviders{envsecrets.New(), filesecrets.New()}
 
+// initialize a deployment
 deployment := &hp.Deployment{
-    Providers: providers,
-    Path:      "./build",
-    Kind:      hp.CompleteDeployment,
+    ConfigPath:  "./site.yaml",
+    PayloadPath: "./build",
+    Environment: "production",
+    Kind:        hp.CompleteDeployment,
 }
 
-if err := deployment.Prepare(context.Background(), nil); err != nil {
-    // The plan is not ready; no provider operation has run.
-}
-plan := deployment.Plan() // A caller-owned snapshot, suitable for a dry run.
-_ = plan
-
-secrets := hp.SecretsProviders{runtime.New(runtime.Secrets{
-    "R2_ACCESS_KEY_ID":     hp.StringSecret(accessKey),
-    "R2_SECRET_ACCESS_KEY": hp.StringSecret(secretAccessKey),
-})}
+// execute the deployment
 if err := deployment.Execute(context.Background(), secrets, nil); err != nil {
-    // No completed or failed Deployment may be executed again.
+    // Execute prepares pending deployments automatically.
 }
 ```
+
+The `production` environment and its providers are read from `site.yaml`, so
+callers normally need not construct `HostingProviders` themselves.
+
+`ConfigBytes` may supply an immutable snapshot previously read from
+`ConfigPath`. HyperProviders still validates that path is a regular,
+non-symlink file, but resolves provider selection from the supplied snapshot.
+When `Providers` is empty, `Environment` is required and is resolved from that
+same snapshot.
 
 `CompleteDeployment` asks a provider to deploy the complete build; providers
 that support replacement, such as Git, remove files absent from that build.
@@ -90,7 +80,7 @@ the build artifacts:
 ```text
 build/
   index.html
-  .hypersync/
+  .hsync/
     manifests/next.json
     revision.json
   .deployment/
@@ -103,13 +93,13 @@ build/
 {
   "preconditions": [
     {
-      "target": ".hypersync/revision.json",
+      "target": ".hsync/revision.json",
       "expected": ".deployment/expected-revision.json",
       "contents": ".deployment/pending-revision.json"
     }
   ],
   "ignore": ["drafts/*"],
-  "enqueue": [".hypersync/manifests/*.json", ".hypersync/revision.json"]
+  "enqueue": [".hsync/manifests/*.json", ".hsync/revision.json"]
 }
 ```
 

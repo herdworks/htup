@@ -14,8 +14,11 @@ import (
 
 // Deployment is the sole high-level entry point for a selected provider set.
 type Deployment struct {
+	ConfigPath   string
+	ConfigBytes  []byte
+	PayloadPath  string
 	Providers    HostingProviders
-	Path         string
+	Environment  string
 	Kind         DeploymentKind
 	instructions DeploymentInstructions
 	plan         DeploymentPlan
@@ -99,7 +102,7 @@ func (d *Deployment) Prepare(ctx context.Context, w io.Writer) error {
 // Execute performs one prepared deployment. It checks every provider's local
 // readiness before the first provider operation can write remotely.
 func (d *Deployment) Execute(ctx context.Context, secrets SecretsProviders, w io.Writer) (err error) {
-	ctx = WithDeploymentRoot(ctx, d.Path)
+	ctx = WithDeploymentRoot(ctx, d.PayloadPath)
 	if !DeploymentActive(ctx) {
 		var finish func(error)
 		ctx, w, finish = BeginDeployment(ctx, "", w)
@@ -196,23 +199,46 @@ func (d *Deployment) Plan() DeploymentPlan {
 // bytes once, and validates every provider operation before returning a plan.
 func (d *Deployment) generatePlan(ctx context.Context, w io.Writer) (DeploymentInstructions, DeploymentPlan, error) {
 	d.mu.Lock()
-	providers, root, kind := d.Providers, d.Path, d.Kind
+	configPath, configBytes, payloadPath, providers, environment, kind := d.ConfigPath, append([]byte(nil), d.ConfigBytes...), d.PayloadPath, d.Providers, d.Environment, d.Kind
 	d.mu.Unlock()
+	var err error
 	if err := kind.Validate(); err != nil {
 		return DeploymentInstructions{}, DeploymentPlan{}, err
 	}
+	if err := ValidateDeploymentConfigPath(configPath); err != nil {
+		return DeploymentInstructions{}, DeploymentPlan{}, err
+	}
+	if configBytes == nil {
+		configBytes, err = ReadDeploymentConfig(configPath)
+		if err != nil {
+			return DeploymentInstructions{}, DeploymentPlan{}, err
+		}
+	}
+	config, err := ParseDeploymentConfig(configPath, configBytes)
+	if err != nil {
+		return DeploymentInstructions{}, DeploymentPlan{}, err
+	}
+	if len(providers) != 0 && environment != "" {
+		return DeploymentInstructions{}, DeploymentPlan{}, errors.New("deployment providers and environment are mutually exclusive")
+	}
 	if len(providers) == 0 {
-		return DeploymentInstructions{}, DeploymentPlan{}, errors.New("no providers selected")
+		providers, err = config.ProvidersForEnvironment(environment)
+		if err != nil {
+			return DeploymentInstructions{}, DeploymentPlan{}, err
+		}
 	}
-	instructions, err := LoadDeploymentInstructions(root)
+	if payloadPath == "" {
+		return DeploymentInstructions{}, DeploymentPlan{}, errors.New("deployment payload path is required")
+	}
+	instructions, err := LoadDeploymentInstructions(payloadPath)
 	if err != nil {
 		return DeploymentInstructions{}, DeploymentPlan{}, err
 	}
-	ignore, err := deploymentIgnore(root, instructions)
+	ignore, err := deploymentIgnore(payloadPath, instructions)
 	if err != nil {
 		return DeploymentInstructions{}, DeploymentPlan{}, err
 	}
-	files, err := walk(root, ignore)
+	files, err := walk(payloadPath, ignore)
 	if err != nil {
 		return DeploymentInstructions{}, DeploymentPlan{}, err
 	}
@@ -223,14 +249,14 @@ func (d *Deployment) generatePlan(ctx context.Context, w io.Writer) (DeploymentI
 	}
 	conditions := make([]materialized, 0, len(instructions.Preconditions))
 	for i, condition := range instructions.Preconditions {
-		content, err := instructionBytes(root, condition.Contents)
+		content, err := instructionBytes(payloadPath, condition.Contents)
 		if err != nil {
 			return DeploymentInstructions{}, DeploymentPlan{}, fmt.Errorf("precondition contents %q: %w", condition.Contents, err)
 		}
 		mime := MimetypeForPath(condition.Target)
 		var expected []byte
 		if condition.Expected != "" {
-			expected, err = instructionBytes(root, condition.Expected)
+			expected, err = instructionBytes(payloadPath, condition.Expected)
 			if err != nil {
 				return DeploymentInstructions{}, DeploymentPlan{}, fmt.Errorf("precondition expected %q: %w", condition.Expected, err)
 			}
@@ -261,7 +287,7 @@ func (d *Deployment) generatePlan(ctx context.Context, w io.Writer) (DeploymentI
 		if err != nil {
 			return DeploymentInstructions{}, DeploymentPlan{}, err
 		}
-		op := DeploymentOperation{HostingProvider: provider, Root: root, Kind: kind}
+		op := DeploymentOperation{HostingProvider: provider, Root: payloadPath, Kind: kind}
 		first := -1
 		for _, condition := range conditions {
 			accepted, err := filter.MatchResource(condition.file.Target, condition.mime)

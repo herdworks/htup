@@ -68,7 +68,11 @@ func newProvider(t *testing.T, remote string) *hosting.HostingProvider {
 }
 
 func deploy(ctx context.Context, provider *hosting.HostingProvider, root string, secretProviders hosting.SecretsProviders, kind hosting.DeploymentKind, w io.Writer) error {
-	return (&hosting.Deployment{Providers: hosting.HostingProviders{"test": provider}, Path: root, Kind: kind}).Execute(ctx, secretProviders, w)
+	configPath := filepath.Join(root, "site.yaml")
+	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
+		return err
+	}
+	return (&hosting.Deployment{ConfigPath: configPath, Providers: hosting.HostingProviders{"test": provider}, PayloadPath: root, Kind: kind}).Execute(ctx, secretProviders, w)
 }
 
 func TestGitProvider_FirstDeploy(t *testing.T) {

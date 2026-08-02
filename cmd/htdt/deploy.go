@@ -45,7 +45,7 @@ func runDeploy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	deployment := &hp.Deployment{Providers: selected, Path: *source, Kind: kind}
+	deployment := &hp.Deployment{ConfigPath: *configPath, PayloadPath: *source, Environment: *envName, Kind: kind}
 
 	if *dryRun {
 		prepareCtx, w, finish := hp.BeginDeployment(hp.WithDeploymentRoot(ctx, *source), *envName, os.Stdout)

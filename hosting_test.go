@@ -16,7 +16,11 @@ import (
 type fakeEngine struct{}
 
 func deployProvider(ctx context.Context, provider *HostingProvider, root string, secretProviders SecretsProviders, kind DeploymentKind, w io.Writer) error {
-	return (&Deployment{Providers: HostingProviders{provider.DisplayName(): provider}, Path: root, Kind: kind}).Execute(ctx, secretProviders, w)
+	configPath := filepath.Join(root, "site.yaml")
+	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
+		return err
+	}
+	return (&Deployment{ConfigPath: configPath, Providers: HostingProviders{provider.DisplayName(): provider}, PayloadPath: root, Kind: kind}).Execute(ctx, secretProviders, w)
 }
 
 func (e *fakeEngine) Validate(provider *HostingProvider) error {
@@ -248,7 +252,7 @@ func TestProvider_DeploymentInstructionsPreconditionAndEnqueue(t *testing.T) {
 		mkFile(t, root, rel)
 	}
 	instructions := []byte(`{
-  "preconditions":[{"target":".hypersync/revision.json","contents":".deployment/pending.json"}],
+  "preconditions":[{"target":".hsync/revision.json","contents":".deployment/pending.json"}],
   "enqueue":["queued/*.json","queued/final.json"]
 }`)
 	if err := os.WriteFile(filepath.Join(root, DeploymentInstructionsFile), instructions, 0o644); err != nil {
@@ -258,10 +262,10 @@ func TestProvider_DeploymentInstructionsPreconditionAndEnqueue(t *testing.T) {
 	if err := deployProvider(context.Background(), p, root, nil, IncrementalDeployment, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if len(engine.preconditions) != 1 || engine.preconditions[0].Target != ".hypersync/revision.json" {
+	if len(engine.preconditions) != 1 || engine.preconditions[0].Target != ".hsync/revision.json" {
 		t.Fatalf("preconditions = %#v", engine.preconditions)
 	}
-	want := [][]string{{"ordinary.txt"}, {"queued/final.json", "queued/first.json"}}
+	want := [][]string{{"ordinary.txt", "site.yaml"}, {"queued/final.json", "queued/first.json"}}
 	if !reflect.DeepEqual(engine.phases, want) {
 		t.Fatalf("phases = %#v, want %#v", engine.phases, want)
 	}
