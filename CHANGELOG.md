@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.25.0 (2026-08-02)
+
 * Added config-backed `Deployment` setup: callers provide a regular YAML or JSON `ConfigPath`, an independent `PayloadPath`, and either explicit providers or a named configured environment. `ConfigBytes` supports an immutable caller-provided configuration snapshot while the path remains validated.
 * Changed `htdt deploy` to resolve its selected environment through `Deployment` and to pass the config path and payload path separately.
 
