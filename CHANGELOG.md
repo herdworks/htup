@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.25.1 (2026-08-03)
+
 * Changed `Deployment` to reject a payload path that resolves to the deployment configuration directory.
 * Fixed deployment file discovery to exclude a payload's top-level `.git` directory.
 
