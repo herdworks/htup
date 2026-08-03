@@ -180,7 +180,7 @@ func walk(root string, ignore DeploymentIgnore) ([]*File, error) {
 			}
 			rel = filepath.ToSlash(rel)
 			first, _, _ := strings.Cut(rel, "/")
-			if first == ProviderWorkspaceDir {
+			if first == ProviderWorkspaceDir || first == ".git" {
 				if d.IsDir() {
 					return filepath.SkipDir
 				}

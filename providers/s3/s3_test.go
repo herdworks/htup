@@ -396,7 +396,7 @@ func TestDeployment_S3OperationOrdersPreconditionBulkAndEnqueue(t *testing.T) {
 
 	provider := readyProvider()
 	provider.Endpoint = server.URL
-	configPath := filepath.Join(root, "site.yaml")
+	configPath := filepath.Join(t.TempDir(), "site.yaml")
 	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -412,18 +412,18 @@ func TestDeployment_S3OperationOrdersPreconditionBulkAndEnqueue(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(writes) != 6 {
+	if len(writes) != 5 {
 		t.Fatalf("writes = %#v", writes)
 	}
 	if writes[0] != "revision.json" {
 		t.Fatalf("first write = %q, want precondition target", writes[0])
 	}
-	if got, want := writes[4:], []string{"queued/first.txt", "queued/second.txt"}; !slices.Equal(got, want) {
+	if got, want := writes[3:], []string{"queued/first.txt", "queued/second.txt"}; !slices.Equal(got, want) {
 		t.Fatalf("enqueued writes = %#v, want %#v", got, want)
 	}
-	bulk := map[string]bool{writes[1]: true, writes[2]: true, writes[3]: true}
-	if !bulk["site.yaml"] || !bulk["bulk/first.txt"] || !bulk["bulk/second.txt"] {
-		t.Fatalf("bulk writes = %#v", writes[1:4])
+	bulk := map[string]bool{writes[1]: true, writes[2]: true}
+	if !bulk["bulk/first.txt"] || !bulk["bulk/second.txt"] {
+		t.Fatalf("bulk writes = %#v", writes[1:3])
 	}
 }
 

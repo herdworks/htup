@@ -22,7 +22,7 @@ type fakeProviderEngine struct {
 
 func deploymentTestConfig(t *testing.T, root string) string {
 	t.Helper()
-	path := filepath.Join(root, "site.yaml")
+	path := filepath.Join(t.TempDir(), "site.yaml")
 	if err := os.WriteFile(path, []byte("title: test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestDeploymentPrepareSelectsEnvironmentFromConfigSnapshot(t *testing.T) {
 	engine := &fakeProviderEngine{}
 	RegisterEngine("config-snapshot", engine)
 	root := t.TempDir()
-	configPath := filepath.Join(root, "site.yaml")
+	configPath := filepath.Join(t.TempDir(), "site.yaml")
 	if err := os.WriteFile(configPath, []byte("providers:\n  selected:\n    kind: config-snapshot\n    endpoint: https://example.com\nenvironments:\n  production:\n    - selected\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +141,37 @@ func TestDeploymentPrepareSelectsEnvironmentFromConfigSnapshot(t *testing.T) {
 	}
 	if plan := deployment.Plan(); len(plan.Concurrent) != 1 || plan.Concurrent[0].HostingProvider.Kind != "config-snapshot" {
 		t.Fatalf("plan = %#v", plan)
+	}
+}
+
+func TestDeploymentPrepareRejectsConfigDirectoryPayload(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "site.yaml")
+	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deployment := &Deployment{
+		ConfigPath:  configPath,
+		PayloadPath: filepath.Join(configDir, "payload", ".."),
+		Providers:   HostingProviders{"explicit": {Kind: "operation-a", Endpoint: "https://example.com"}},
+		Kind:        CompleteDeployment,
+	}
+	if err := deployment.Prepare(context.Background(), io.Discard); err == nil {
+		t.Fatal("Prepare() error = nil")
+	}
+	if deployment.Status() != DeploymentFailed {
+		t.Fatalf("status = %q, want %q", deployment.Status(), DeploymentFailed)
+	}
+}
+
+func TestValidateDeploymentPayloadPath(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "site.yaml")
+	if err := ValidateDeploymentPayloadPath(configPath, filepath.Join(configDir, "payload", "..")); err == nil {
+		t.Fatal("ValidateDeploymentPayloadPath() error = nil")
+	}
+	if err := ValidateDeploymentPayloadPath(configPath, filepath.Join(configDir, "build")); err != nil {
+		t.Fatalf("ValidateDeploymentPayloadPath() error = %v", err)
 	}
 }
 

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Changed `Deployment` to reject a payload path that resolves to the deployment configuration directory.
+* Fixed deployment file discovery to exclude a payload's top-level `.git` directory.
+
 ## v0.25.0 (2026-08-02)
 
 * Added config-backed `Deployment` setup: callers provide a regular YAML or JSON `ConfigPath`, an independent `PayloadPath`, and either explicit providers or a named configured environment. `ConfigBytes` supports an immutable caller-provided configuration snapshot while the path remains validated.

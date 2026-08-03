@@ -45,6 +45,28 @@ func ValidateDeploymentConfigPath(filename string) error {
 	return nil
 }
 
+// ValidateDeploymentPayloadPath verifies that the payload is outside the
+// directory containing the deployment configuration.
+func ValidateDeploymentPayloadPath(configPath, payloadPath string) (err error) {
+	var configAbsDir, payloadAbsPath string
+	if configPath == "" {
+		return fmt.Errorf("deployment config path is required")
+	}
+	if configAbsDir, err = filepath.Abs(filepath.Dir(configPath)); err != nil {
+		return err
+	}
+	if payloadPath == "" {
+		return fmt.Errorf("deployment payload path is required")
+	}
+	if payloadAbsPath, err = filepath.Abs(filepath.Clean(payloadPath)); err != nil {
+		return err
+	}
+	if payloadAbsPath == configAbsDir {
+		return fmt.Errorf("deployment payload path must not be the deployment config directory")
+	}
+	return nil
+}
+
 // ReadDeploymentConfig reads a regular YAML or JSON configuration file without
 // interpreting its contents.
 func ReadDeploymentConfig(filename string) ([]byte, error) {

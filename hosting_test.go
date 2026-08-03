@@ -16,7 +16,8 @@ import (
 type fakeEngine struct{}
 
 func deployProvider(ctx context.Context, provider *HostingProvider, root string, secretProviders SecretsProviders, kind DeploymentKind, w io.Writer) error {
-	configPath := filepath.Join(root, "site.yaml")
+	configPath := root + ".yaml"
+	defer os.Remove(configPath)
 	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
 		return err
 	}
@@ -265,7 +266,7 @@ func TestProvider_DeploymentInstructionsPreconditionAndEnqueue(t *testing.T) {
 	if len(engine.preconditions) != 1 || engine.preconditions[0].Target != ".hsync/revision.json" {
 		t.Fatalf("preconditions = %#v", engine.preconditions)
 	}
-	want := [][]string{{"ordinary.txt", "site.yaml"}, {"queued/final.json", "queued/first.json"}}
+	want := [][]string{{"ordinary.txt"}, {"queued/final.json", "queued/first.json"}}
 	if !reflect.DeepEqual(engine.phases, want) {
 		t.Fatalf("phases = %#v, want %#v", engine.phases, want)
 	}

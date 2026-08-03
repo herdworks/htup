@@ -151,7 +151,8 @@ func TestWalk_DeterministicAndRelative(t *testing.T) {
 func TestWalk_IgnoresProviderWorkspaceDir(t *testing.T) {
 	root := t.TempDir()
 	paths := map[string]string{
-		"index.html": "deploy me",
+		"index.html":  "deploy me",
+		".git/config": "ignore me",
 		"nested/" + ProviderWorkspaceDir + "/file.txt": "deploy nested workspace name",
 		ProviderWorkspaceDir + "/git/cache/file":       "ignore me",
 	}

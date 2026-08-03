@@ -14,7 +14,7 @@ require (
 	github.com/go-git/go-git/v5 v5.18.0
 	github.com/herdworks/hyperfiles-go v0.1.0
 	golang.org/x/crypto v0.45.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

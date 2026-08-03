@@ -208,6 +208,9 @@ func (d *Deployment) generatePlan(ctx context.Context, w io.Writer) (DeploymentI
 	if err := ValidateDeploymentConfigPath(configPath); err != nil {
 		return DeploymentInstructions{}, DeploymentPlan{}, err
 	}
+	if err := ValidateDeploymentPayloadPath(configPath, payloadPath); err != nil {
+		return DeploymentInstructions{}, DeploymentPlan{}, err
+	}
 	if configBytes == nil {
 		configBytes, err = ReadDeploymentConfig(configPath)
 		if err != nil {
@@ -226,9 +229,6 @@ func (d *Deployment) generatePlan(ctx context.Context, w io.Writer) (DeploymentI
 		if err != nil {
 			return DeploymentInstructions{}, DeploymentPlan{}, err
 		}
-	}
-	if payloadPath == "" {
-		return DeploymentInstructions{}, DeploymentPlan{}, errors.New("deployment payload path is required")
 	}
 	instructions, err := LoadDeploymentInstructions(payloadPath)
 	if err != nil {

@@ -43,6 +43,10 @@ if err := deployment.Execute(context.Background(), secrets, nil); err != nil {
 The `production` environment and its providers are read from `site.yaml`, so
 callers normally need not construct `HostingProviders` themselves.
 
+`PayloadPath` must be a separate directory from the parent directory of
+`ConfigPath`; a deployment never treats the project configuration directory as
+its payload.
+
 `ConfigBytes` may supply an immutable snapshot previously read from
 `ConfigPath`. HyperProviders still validates that path is a regular,
 non-symlink file, but resolves provider selection from the supplied snapshot.
