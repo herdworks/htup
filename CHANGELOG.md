@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.26.0 (2026-08-03)
+
 * Added JSON Schema metadata for hosting providers, provider filter rules, and
   deployment-time secret references.
 * Added `HostingProviderKindGit` and `HostingProviderKindS3` constants for the
