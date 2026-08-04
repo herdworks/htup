@@ -24,15 +24,36 @@ type HostingEngine interface {
 	PerformOperation(context.Context, SecretsProviders, DeploymentOperation, io.Writer) error
 }
 
+const (
+	// HostingProviderKindGit publishes a deployment to a Git remote over HTTPS or SSH.
+	HostingProviderKindGit = "git"
+	// HostingProviderKindS3 publishes a deployment to an S3-compatible object store.
+	HostingProviderKindS3 = "s3"
+)
+
 type HostingProvider struct {
-	Kind     string         `json:"kind" yaml:"kind"`
-	Endpoint string         `json:"endpoint" yaml:"endpoint"`
+	// Kind selects a HostingEngine. The built-in kinds are "git" and "s3";
+	// other registered kinds may be experimental and therefore undocumented.
+	Kind string `json:"kind" yaml:"kind" jsonschema:"required,description=Built-in kinds are 'git' and 's3'. Other registered kinds may be experimental and undocumented."`
+	// Endpoint is provider-specific: Git uses its remote URL, while S3 uses an
+	// S3-compatible endpoint and may derive a path-style bucket from its path.
+	Endpoint string         `json:"endpoint" yaml:"endpoint" jsonschema:"required,description=Provider-specific connection target. Git uses a remote URL. S3 uses an S3-compatible endpoint and may derive a path-style bucket from its path."`
 	BaseURL  string         `json:"base_url,omitempty" yaml:"base_url,omitempty"`
 	Config   map[string]any `json:"config,omitempty" yaml:"config,omitempty"`
 	Secrets  Secrets        `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 	Include  FilterRules    `json:"include,omitempty" yaml:"include,omitempty"`
 	Exclude  FilterRules    `json:"exclude,omitempty" yaml:"exclude,omitempty"`
 	engine   HostingEngine
+}
+
+func (HostingProvider) JSONSchemaTitle() string {
+	return "Hosting provider"
+}
+func (HostingProvider) JSONSchemaName() string { return "provider" }
+func (HostingProvider) JSONSchemaSummary() string { return "Configuration for one website hosting provider." }
+
+func (HostingProvider) JSONSchemaDescription() string {
+	return "Configuration for one website hosting provider."
 }
 
 type HostingProviders map[string]*HostingProvider
@@ -48,6 +69,16 @@ type Filter struct {
 type FilterRules struct {
 	Paths []string `json:"paths,omitempty" yaml:"paths,omitempty"`
 	Types []string `json:"types,omitempty" yaml:"types,omitempty"`
+}
+
+func (FilterRules) JSONSchemaTitle() string {
+	return "Hosting provider filter rules"
+}
+func (FilterRules) JSONSchemaName() string { return "provider-filter-rules" }
+func (FilterRules) JSONSchemaSummary() string { return "Optional provider path and MIME type rules." }
+
+func (FilterRules) JSONSchemaDescription() string {
+	return "Optional path and MIME type rules that select provider-owned files."
 }
 
 type compiledFilter struct{ includePath, includeType, excludePath, excludeType []*regexp.Regexp }

@@ -33,8 +33,18 @@ func (providers SecretsProviders) Resolve(ctx context.Context, key string) (Secr
 }
 
 type Secret struct {
-	Name string `json:"name" yaml:"name"`
-	Key  string `json:"key" yaml:"key"`
+	Name string `json:"name" yaml:"name" jsonschema:"required"`
+	Key  string `json:"key" yaml:"key" jsonschema:"required"`
+}
+
+func (Secret) JSONSchemaTitle() string {
+	return "Hosting provider secret"
+}
+func (Secret) JSONSchemaName() string { return "provider-secret" }
+func (Secret) JSONSchemaSummary() string { return "A deployment-time secret reference." }
+
+func (Secret) JSONSchemaDescription() string {
+	return "A named reference to a secret resolved at deployment time."
 }
 
 type SecretValue []byte

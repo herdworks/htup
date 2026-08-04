@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	Kind = "s3"
+	Kind = hosting.HostingProviderKindS3
 
 	AddressingStylePath    = "path"
 	AddressingStyleVirtual = "virtual"

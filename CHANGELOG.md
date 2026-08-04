@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added JSON Schema metadata for hosting providers, provider filter rules, and
+  deployment-time secret references.
+* Added `HostingProviderKindGit` and `HostingProviderKindS3` constants for the
+  built-in provider kinds.
+
 ## v0.25.1 (2026-08-03)
 
 * Changed `Deployment` to reject a payload path that resolves to the deployment configuration directory.

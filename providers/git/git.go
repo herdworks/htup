@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	Kind              = "git"
+	Kind              = hosting.HostingProviderKindGit
 	DefaultTagPrefix  = "build-"
 	defaultAuthorName = "hyperproviders"
 	defaultAuthorMail = "hyperproviders@localhost"
