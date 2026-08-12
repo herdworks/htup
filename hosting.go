@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/herdworks/hyperfiles-go/mimetypes"
+	"github.com/herdworks/hypermedia/mimetypes"
 )
 
 // HostingEngine owns provider-specific validation and execution of a complete operation.

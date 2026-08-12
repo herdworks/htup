@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/herdworks/hyperfiles-go/mimetypes"
+	"github.com/herdworks/hypermedia/mimetypes"
 )
 
 // File is an immutable handle to a deployable artifact.

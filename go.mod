@@ -7,7 +7,7 @@ go 1.25.0
 
 // first-party dependencies
 require (
-	github.com/herdworks/hyperfiles-go v0.1.0
+        github.com/herdworks/hypermedia v0.2.0
 )
 
 // third-party dependencies
