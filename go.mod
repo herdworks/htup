@@ -1,10 +1,16 @@
-// hyperproviders-go module
+// htup module
 //
 // reference: https://go.dev/doc/modules/gomod-ref#replace
-module github.com/herdworks/hyperproviders-go
+module github.com/herdworks/htup
 
 go 1.25.0
 
+// first-party dependencies
+require (
+	github.com/herdworks/hyperfiles-go v0.1.0
+)
+
+// third-party dependencies
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
@@ -12,12 +18,12 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.1
 	github.com/go-git/go-billy/v5 v5.8.0
 	github.com/go-git/go-git/v5 v5.18.0
-	github.com/herdworks/hyperfiles-go v0.1.0
 	golang.org/x/crypto v0.45.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+// transitive dependencies
 require (
 	dario.cat/mergo v1.0.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect

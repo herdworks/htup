@@ -1,4 +1,4 @@
-package hyperproviders
+package htup
 
 import (
 	"context"
@@ -50,7 +50,9 @@ func (HostingProvider) JSONSchemaTitle() string {
 	return "Hosting provider"
 }
 func (HostingProvider) JSONSchemaName() string { return "provider" }
-func (HostingProvider) JSONSchemaSummary() string { return "Configuration for one website hosting provider." }
+func (HostingProvider) JSONSchemaSummary() string {
+	return "Configuration for one website hosting provider."
+}
 
 func (HostingProvider) JSONSchemaDescription() string {
 	return "Configuration for one website hosting provider."
@@ -74,7 +76,7 @@ type FilterRules struct {
 func (FilterRules) JSONSchemaTitle() string {
 	return "Hosting provider filter rules"
 }
-func (FilterRules) JSONSchemaName() string { return "provider-filter-rules" }
+func (FilterRules) JSONSchemaName() string    { return "provider-filter-rules" }
 func (FilterRules) JSONSchemaSummary() string { return "Optional provider path and MIME type rules." }
 
 func (FilterRules) JSONSchemaDescription() string {

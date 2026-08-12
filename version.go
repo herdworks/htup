@@ -1,4 +1,4 @@
-package hyperproviders
+package htup
 
 import (
 	"time"

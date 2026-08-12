@@ -15,8 +15,8 @@ import (
 	"testing"
 
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	hosting "github.com/herdworks/hyperproviders-go"
-	"github.com/herdworks/hyperproviders-go/providers/runtime"
+	"github.com/herdworks/htup"
+	"github.com/herdworks/htup/providers/runtime"
 )
 
 func TestUnmarshalHostingProvider(t *testing.T) {
@@ -36,7 +36,7 @@ func TestUnmarshalHostingProvider(t *testing.T) {
 			{ "name": "secret_access_key", "key": "AWS_SECRET_ACCESS_KEY" }
 		]
 	}`)
-	var provider hosting.HostingProvider
+	var provider htup.HostingProvider
 	if err := json.Unmarshal(raw, &provider); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestUnmarshalHostingProvider(t *testing.T) {
 }
 
 func TestValidate_RequiresBucket(t *testing.T) {
-	provider := &hosting.HostingProvider{
+	provider := &htup.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config:   map[string]any{},
@@ -73,11 +73,11 @@ func TestValidate_RequiresBucket(t *testing.T) {
 }
 
 func TestValidate_UsesBucketFromEndpointPath(t *testing.T) {
-	provider := &hosting.HostingProvider{
+	provider := &htup.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com/path-bucket",
 		Config:   map[string]any{},
-		Secrets: hosting.Secrets{
+		Secrets: htup.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -96,7 +96,7 @@ func TestValidate_UsesBucketFromEndpointPath(t *testing.T) {
 }
 
 func TestValidate_RejectsUnknownConditionalMode(t *testing.T) {
-	provider := &hosting.HostingProvider{
+	provider := &htup.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config: map[string]any{
@@ -110,12 +110,12 @@ func TestValidate_RejectsUnknownConditionalMode(t *testing.T) {
 }
 
 func TestValidate_UsesBucketFromConfig(t *testing.T) {
-	provider := &hosting.HostingProvider{
+	provider := &htup.HostingProvider{
 		Config: map[string]any{
 			"bucket": "configured-bucket",
 			"region": "us-east-1",
 		},
-		Secrets: hosting.Secrets{
+		Secrets: htup.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -137,12 +137,12 @@ func TestValidate_UsesBucketFromConfig(t *testing.T) {
 }
 
 func TestValidate_AllowsVirtualAddressingWithoutBucket(t *testing.T) {
-	provider := &hosting.HostingProvider{
+	provider := &htup.HostingProvider{
 		Config: map[string]any{
 			"addressing_style": "virtual",
 			"region":           "us-east-1",
 		},
-		Secrets: hosting.Secrets{
+		Secrets: htup.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -161,7 +161,7 @@ func TestValidate_AllowsVirtualAddressingWithoutBucket(t *testing.T) {
 }
 
 func TestValidate_RejectsUnknownAddressingStyle(t *testing.T) {
-	provider := &hosting.HostingProvider{Config: map[string]any{"addressing_style": "sideways"}}
+	provider := &htup.HostingProvider{Config: map[string]any{"addressing_style": "sideways"}}
 
 	if err := (Engine{}).Validate(provider); err == nil {
 		t.Fatal("expected error for unknown addressing_style")
@@ -169,7 +169,7 @@ func TestValidate_RejectsUnknownAddressingStyle(t *testing.T) {
 }
 
 func TestValidate_RejectsInvalidWorkers(t *testing.T) {
-	provider := &hosting.HostingProvider{Config: map[string]any{"workers": 0}}
+	provider := &htup.HostingProvider{Config: map[string]any{"workers": 0}}
 
 	err := (Engine{}).Validate(provider)
 	if err == nil {
@@ -195,8 +195,8 @@ func TestReady_RequiresRuntimeSecrets(t *testing.T) {
 func TestReady_WithRuntimeSecrets(t *testing.T) {
 	provider := readyProvider()
 	secretProviders := runtimeSecretProviders(runtime.Secrets{
-		"AWS_ACCESS_KEY_ID":     hosting.StringSecret("access"),
-		"AWS_SECRET_ACCESS_KEY": hosting.StringSecret("secret"),
+		"AWS_ACCESS_KEY_ID":     htup.StringSecret("access"),
+		"AWS_SECRET_ACCESS_KEY": htup.StringSecret("secret"),
 	})
 
 	if err := provider.Ready(context.Background(), secretProviders); err != nil {
@@ -204,12 +204,12 @@ func TestReady_WithRuntimeSecrets(t *testing.T) {
 	}
 }
 
-func readyProvider() *hosting.HostingProvider {
-	return &hosting.HostingProvider{
+func readyProvider() *htup.HostingProvider {
+	return &htup.HostingProvider{
 		Kind:     Kind,
 		Endpoint: "https://example.com",
 		Config:   map[string]any{"bucket": "assets"},
-		Secrets: hosting.Secrets{
+		Secrets: htup.Secrets{
 			{Name: "access_key_id", Key: "AWS_ACCESS_KEY_ID"},
 			{Name: "secret_access_key", Key: "AWS_SECRET_ACCESS_KEY"},
 		},
@@ -319,7 +319,7 @@ func TestCompareAndSwapFileRejectsDifferentRemoteBytes(t *testing.T) {
 	provider := readyProvider()
 	provider.Endpoint = server.URL
 	err := (Engine{}).compareAndSwap(context.Background(), readySecretProviders(), provider, condition, io.Discard)
-	if !errors.Is(err, hosting.ErrDeploymentPreconditionFailed) {
+	if !errors.Is(err, htup.ErrDeploymentPreconditionFailed) {
 		t.Fatalf("CompareAndSwapFile error = %v", err)
 	}
 	if put {
@@ -400,11 +400,11 @@ func TestDeployment_S3OperationOrdersPreconditionBulkAndEnqueue(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	deployment := &hosting.Deployment{
+	deployment := &htup.Deployment{
 		ConfigPath:  configPath,
-		Providers:   hosting.HostingProviders{"assets": provider},
+		Providers:   htup.HostingProviders{"assets": provider},
 		PayloadPath: root,
-		Kind:        hosting.CompleteDeployment,
+		Kind:        htup.CompleteDeployment,
 	}
 	if err := deployment.Execute(context.Background(), readySecretProviders(), io.Discard); err != nil {
 		t.Fatal(err)
@@ -427,7 +427,7 @@ func TestDeployment_S3OperationOrdersPreconditionBulkAndEnqueue(t *testing.T) {
 	}
 }
 
-func preconditionForTest(t *testing.T, root string, expected bool) hosting.PreconditionFile {
+func preconditionForTest(t *testing.T, root string, expected bool) htup.PreconditionFile {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(root, ".deployment"), 0o755); err != nil {
 		t.Fatal(err)
@@ -442,14 +442,14 @@ func preconditionForTest(t *testing.T, root string, expected bool) hosting.Preco
 		}
 		condition = `{"target":"revision.json","expected":".deployment/expected.json","contents":".deployment/pending.json"}`
 	}
-	if err := os.WriteFile(filepath.Join(root, hosting.DeploymentInstructionsFile), []byte(`{"preconditions":[`+condition+`]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, htup.DeploymentInstructionsFile), []byte(`{"preconditions":[`+condition+`]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := os.ReadFile(filepath.Join(root, ".deployment", "pending.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared := hosting.PreconditionFile{Target: "revision.json", Content: pending}
+	prepared := htup.PreconditionFile{Target: "revision.json", Content: pending}
 	if expected {
 		prepared.Expected, err = os.ReadFile(filepath.Join(root, ".deployment", "expected.json"))
 		if err != nil {
@@ -460,13 +460,13 @@ func preconditionForTest(t *testing.T, root string, expected bool) hosting.Preco
 	return prepared
 }
 
-func readySecretProviders() hosting.SecretsProviders {
+func readySecretProviders() htup.SecretsProviders {
 	return runtimeSecretProviders(runtime.Secrets{
-		"AWS_ACCESS_KEY_ID":     hosting.StringSecret("access"),
-		"AWS_SECRET_ACCESS_KEY": hosting.StringSecret("secret"),
+		"AWS_ACCESS_KEY_ID":     htup.StringSecret("access"),
+		"AWS_SECRET_ACCESS_KEY": htup.StringSecret("secret"),
 	})
 }
 
-func runtimeSecretProviders(secrets runtime.Secrets) hosting.SecretsProviders {
-	return hosting.SecretsProviders{runtime.New(secrets)}
+func runtimeSecretProviders(secrets runtime.Secrets) htup.SecretsProviders {
+	return htup.SecretsProviders{runtime.New(secrets)}
 }

@@ -1,5 +1,5 @@
-// Command htdt is the HyperTexting Deploy Tool — a standalone CLI for
-// deploying arbitrary directories to S3 or Git via hyperproviders-go.
+// Command htup is the HyperTexting Deploy Tool — a standalone CLI for
+// deploying arbitrary directories to S3 or Git via htup.
 package main
 
 import (
@@ -51,12 +51,12 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `htdt — HyperTexting Deploy Tool
+	fmt.Fprintln(os.Stderr, `htup — HyperTexting Deploy Tool
 
 Usage:
-  htdt deploy    --config <file> --environment <name> --source <path> --mode <replacement|overlay> [--dry-run]
-  htdt validate  --config <file>
-  htdt ready     --config <file> [--environment <name>]
-  htdt list      --config <file>
-  htdt version`)
+  htup deploy    --config <file> --environment <name> --source <path> --mode <replacement|overlay> [--dry-run]
+  htup validate  --config <file>
+  htup ready     --config <file> [--environment <name>]
+  htup list      --config <file>
+  htup version`)
 }

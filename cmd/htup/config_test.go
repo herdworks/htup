@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	hp "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
 func TestLoadConfig_JSON(t *testing.T) {
@@ -35,14 +35,14 @@ func TestLoadConfig_JSON(t *testing.T) {
 }
 
 func TestRenderPlan(t *testing.T) {
-	provider := &hp.HostingProvider{Kind: "test", Endpoint: "https://example.com"}
+	provider := &htup.HostingProvider{Kind: "test", Endpoint: "https://example.com"}
 	var output bytes.Buffer
-	renderPlan(&output, hp.HostingProviders{"production": provider}, hp.DeploymentPlan{
-		Sequential: []hp.DeploymentOperation{{
+	renderPlan(&output, htup.HostingProviders{"production": provider}, htup.DeploymentPlan{
+		Sequential: []htup.DeploymentOperation{{
 			HostingProvider: provider,
-			Preconditions:   []hp.PreconditionFile{{Target: "revision.json"}},
+			Preconditions:   []htup.PreconditionFile{{Target: "revision.json"}},
 		}},
-		Concurrent: []hp.DeploymentOperation{{HostingProvider: provider}},
+		Concurrent: []htup.DeploymentOperation{{HostingProvider: provider}},
 	})
 	if got, want := output.String(), "plan sequential provider \"production\": 1 preconditions, 0 bulk, 0 enqueued\n  precondition revision.json\nplan concurrent provider \"production\": 0 preconditions, 0 bulk, 0 enqueued\n"; got != want {
 		t.Fatalf("renderPlan() = %q, want %q", got, want)

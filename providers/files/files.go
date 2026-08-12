@@ -1,4 +1,4 @@
-// Package files implements a hosting.SecretsProvider backed by local files.
+// Package files implements a htup.SecretsProvider backed by local files.
 package files
 
 import (
@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	hosting "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
 const Kind = "files"
@@ -35,7 +35,7 @@ func (*Provider) Name() string { return Kind }
 
 // Resolve reads key as a filesystem path. Relative paths are joined to BaseDir
 // when configured. Only ~/, $HOME/, and ${HOME}/ are expanded.
-func (p *Provider) Resolve(ctx context.Context, key string) (hosting.SecretValue, error) {
+func (p *Provider) Resolve(ctx context.Context, key string) (htup.SecretValue, error) {
 	path, err := p.resolvePath(key)
 	if err != nil {
 		return nil, err
@@ -43,14 +43,14 @@ func (p *Provider) Resolve(ctx context.Context, key string) (hosting.SecretValue
 	value, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", hosting.ErrSecretNotFound, key)
+			return nil, fmt.Errorf("%w: %s", htup.ErrSecretNotFound, key)
 		}
 		return nil, fmt.Errorf("read file secret %s: %w", key, err)
 	}
 	if len(value) == 0 {
-		return nil, fmt.Errorf("%w: %s", hosting.ErrSecretEmpty, key)
+		return nil, fmt.Errorf("%w: %s", htup.ErrSecretEmpty, key)
 	}
-	return hosting.BytesSecret(value), nil
+	return htup.BytesSecret(value), nil
 }
 
 func (p *Provider) resolvePath(key string) (string, error) {

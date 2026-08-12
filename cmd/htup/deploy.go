@@ -8,10 +8,10 @@ import (
 	"os"
 	"sort"
 
-	hp "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
-// runDeploy implements `htdt deploy`.
+// runDeploy implements `htup deploy`.
 func runDeploy(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	var (
@@ -28,7 +28,7 @@ func runDeploy(ctx context.Context, args []string) error {
 		fs.Usage()
 		return fmt.Errorf("deploy: --config, --environment, --source, and --mode are required")
 	}
-	kind := hp.DeploymentKind(*modeName)
+	kind := htup.DeploymentKind(*modeName)
 	if err := kind.Validate(); err != nil {
 		return fmt.Errorf("deploy: %w", err)
 	}
@@ -45,10 +45,10 @@ func runDeploy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	deployment := &hp.Deployment{ConfigPath: *configPath, PayloadPath: *source, Environment: *envName, Kind: kind}
+	deployment := &htup.Deployment{ConfigPath: *configPath, PayloadPath: *source, Environment: *envName, Kind: kind}
 
 	if *dryRun {
-		prepareCtx, w, finish := hp.BeginDeployment(hp.WithDeploymentRoot(ctx, *source), *envName, os.Stdout)
+		prepareCtx, w, finish := htup.BeginDeployment(htup.WithDeploymentRoot(ctx, *source), *envName, os.Stdout)
 		err := deployment.Prepare(prepareCtx, w)
 		finish(err)
 		if err == nil {
@@ -59,10 +59,10 @@ func runDeploy(ctx context.Context, args []string) error {
 	return deployment.Execute(ctx, SecretProviders(), nil)
 }
 
-func renderPlan(w io.Writer, providers hp.HostingProviders, plan hp.DeploymentPlan) {
+func renderPlan(w io.Writer, providers htup.HostingProviders, plan htup.DeploymentPlan) {
 	for _, group := range []struct {
 		name       string
-		operations []hp.DeploymentOperation
+		operations []htup.DeploymentOperation
 	}{
 		{name: "sequential", operations: plan.Sequential},
 		{name: "concurrent", operations: plan.Concurrent},
@@ -89,7 +89,7 @@ func renderPlan(w io.Writer, providers hp.HostingProviders, plan hp.DeploymentPl
 	}
 }
 
-// runValidate implements `htdt validate`. Parses the config and runs
+// runValidate implements `htup validate`. Parses the config and runs
 // Validate() on every provider of every environment.
 func runValidate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
@@ -124,7 +124,7 @@ func runValidate(ctx context.Context, args []string) error {
 	return nil
 }
 
-// runReady implements `htdt ready`. It parses config and runs runtime-aware
+// runReady implements `htup ready`. It parses config and runs runtime-aware
 // local readiness checks for each selected provider. Secrets are resolved from
 // OS environment variables via SecretProviders().
 func runReady(ctx context.Context, args []string) error {
@@ -173,7 +173,7 @@ func runReady(ctx context.Context, args []string) error {
 	return nil
 }
 
-// runList implements `htdt list`. Prints environments + provider kinds.
+// runList implements `htup list`. Prints environments + provider kinds.
 func runList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to JSON or YAML config file")

@@ -9,7 +9,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	hosting "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 	stdssh "golang.org/x/crypto/ssh"
 )
 
@@ -23,7 +23,7 @@ const (
 // HTTPS URLs use BasicAuth with a "token" secret; SSH URLs use NewPublicKeys
 // with an "ssh_private_key" secret containing PEM bytes. Local file:// URLs
 // (used in tests) need no auth.
-func resolveAuth(ctx context.Context, secretProviders hosting.SecretsProviders, cfg *settings, secretSet hosting.Secrets) (transport.AuthMethod, error) {
+func resolveAuth(ctx context.Context, secretProviders htup.SecretsProviders, cfg *settings, secretSet htup.Secrets) (transport.AuthMethod, error) {
 	if strings.HasPrefix(cfg.RemoteURL, "file://") {
 		return nil, nil
 	}
@@ -37,7 +37,7 @@ func isHTTP(url string) bool {
 	return strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
 }
 
-func httpAuth(ctx context.Context, secretProviders hosting.SecretsProviders, secretSet hosting.Secrets) (transport.AuthMethod, error) {
+func httpAuth(ctx context.Context, secretProviders htup.SecretsProviders, secretSet htup.Secrets) (transport.AuthMethod, error) {
 	token, err := secretSet.Get(secretToken)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func httpAuth(ctx context.Context, secretProviders hosting.SecretsProviders, sec
 	return &githttp.BasicAuth{Username: "hyperproviders", Password: value.String()}, nil
 }
 
-func sshAuth(ctx context.Context, secretProviders hosting.SecretsProviders, cfg *settings, secretSet hosting.Secrets) (transport.AuthMethod, error) {
+func sshAuth(ctx context.Context, secretProviders htup.SecretsProviders, cfg *settings, secretSet htup.Secrets) (transport.AuthMethod, error) {
 	pk, err := secretSet.Get(secretSSHPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("ssh auth requires %q", secretSSHPrivateKey)

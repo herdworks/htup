@@ -1,6 +1,6 @@
-# HyperProviders
+# htup
 
-HyperProviders prepares and executes a declarative deployment of one build
+The `github.com/herdworks/htup` package prepares and executes a declarative deployment of one build
 directory to one or more selected hosting providers. It includes S3-compatible
 object storage and Git providers.
 
@@ -18,20 +18,20 @@ the prepared plan after every provider passes its readiness check.
 import (
     "context"
 
-    hp "github.com/herdworks/hyperproviders-go"
-    envsecrets "github.com/herdworks/hyperproviders-go/providers/env"
-    filesecrets "github.com/herdworks/hyperproviders-go/providers/files"
+    "github.com/herdworks/htup"
+    envsecrets "github.com/herdworks/htup/providers/env"
+    filesecrets "github.com/herdworks/htup/providers/files"
 )
 
 // initialize secrets providers
-var secrets hp.SecretsProviders = hp.SecretsProviders{envsecrets.New(), filesecrets.New()}
+var secrets htup.SecretsProviders = htup.SecretsProviders{envsecrets.New(), filesecrets.New()}
 
 // initialize a deployment
-deployment := &hp.Deployment{
+deployment := &htup.Deployment{
     ConfigPath:  "./site.yaml",
     PayloadPath: "./build",
     Environment: "production",
-    Kind:        hp.CompleteDeployment,
+    Kind:        htup.CompleteDeployment,
 }
 
 // execute the deployment
@@ -133,23 +133,23 @@ registered before preparation:
 
 ```go
 import (
-    _ "github.com/herdworks/hyperproviders-go/providers/git"
-    _ "github.com/herdworks/hyperproviders-go/providers/s3"
+    _ "github.com/herdworks/htup/providers/git"
+    _ "github.com/herdworks/htup/providers/s3"
 )
 ```
 
-## `htdt`
+## `htup`
 
-`htdt` reads JSON or YAML provider/environment configuration. An environment
+`htup` reads JSON or YAML provider/environment configuration. An environment
 is an explicit ordered selection from the provider map.
 
 ```sh
-go install github.com/herdworks/hyperproviders-go/cmd/htdt@latest
+go install github.com/herdworks/htup/cmd/htup@latest
 
-htdt validate --config ./htdt.json
-htdt ready --config ./htdt.json --environment production
-htdt deploy --config ./htdt.json --environment production --source ./build --mode complete --dry-run
-htdt deploy --config ./htdt.json --environment production --source ./build --mode complete
+htup validate --config ./htup.json
+htup ready --config ./htup.json --environment production
+htup deploy --config ./htup.json --environment production --source ./build --mode complete --dry-run
+htup deploy --config ./htup.json --environment production --source ./build --mode complete
 ```
 
 `--dry-run` calls `Prepare` and prints the sequential and concurrent operations,
@@ -177,7 +177,7 @@ Example configuration:
 ```
 
 `validate` checks static provider configuration. `ready` also resolves local
-credentials (from environment variables in `htdt`) without contacting a remote
+credentials (from environment variables in `htup`) without contacting a remote
 service.
 
 ## Development

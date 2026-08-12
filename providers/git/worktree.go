@@ -14,23 +14,23 @@ import (
 	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	hosting "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
-func validatePrecondition(wt *git.Worktree, publishDir string, condition hosting.PreconditionFile) error {
+func validatePrecondition(wt *git.Worktree, publishDir string, condition htup.PreconditionFile) error {
 	rel := repoPath(publishDir, condition.Target)
 	current, err := wt.Filesystem.Open(rel)
 	if condition.Expected == nil {
 		if err == nil {
 			_ = current.Close()
-			return fmt.Errorf("%w: target %q already exists", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+			return fmt.Errorf("%w: target %q already exists", htup.ErrDeploymentPreconditionFailed, condition.Target)
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("git: read precondition target %s: %w", condition.Target, err)
 		}
 	} else {
 		if err != nil {
-			return fmt.Errorf("%w: target %q does not exist", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+			return fmt.Errorf("%w: target %q does not exist", htup.ErrDeploymentPreconditionFailed, condition.Target)
 		}
 		actual, readErr := io.ReadAll(current)
 		closeErr := current.Close()
@@ -41,13 +41,13 @@ func validatePrecondition(wt *git.Worktree, publishDir string, condition hosting
 			return closeErr
 		}
 		if !bytes.Equal(actual, condition.Expected) {
-			return fmt.Errorf("%w: target %q differs from expected contents", hosting.ErrDeploymentPreconditionFailed, condition.Target)
+			return fmt.Errorf("%w: target %q differs from expected contents", htup.ErrDeploymentPreconditionFailed, condition.Target)
 		}
 	}
 	return nil
 }
 
-func materializePrecondition(wt *git.Worktree, publishDir string, condition hosting.PreconditionFile) error {
+func materializePrecondition(wt *git.Worktree, publishDir string, condition htup.PreconditionFile) error {
 	rel := repoPath(publishDir, condition.Target)
 	if err := wt.Filesystem.MkdirAll(path.Dir(rel), 0o755); err != nil {
 		return err
@@ -227,9 +227,9 @@ func removeAll(fs billy.Filesystem, rel string) error {
 	return fs.Remove(rel)
 }
 
-// copyFiles writes each hosting.File into fs under publishDir. Intermediate
+// copyFiles writes each htup.File into fs under publishDir. Intermediate
 // directories are created as needed.
-func copyFiles(fs billy.Filesystem, publishDir string, files []*hosting.File) error {
+func copyFiles(fs billy.Filesystem, publishDir string, files []*htup.File) error {
 	for _, file := range files {
 		rel := repoPath(publishDir, file.RelPath())
 		if err := fs.MkdirAll(path.Dir(rel), 0o755); err != nil {
@@ -242,7 +242,7 @@ func copyFiles(fs billy.Filesystem, publishDir string, files []*hosting.File) er
 	return nil
 }
 
-func stageFiles(wt *git.Worktree, publishDir string, files []*hosting.File) error {
+func stageFiles(wt *git.Worktree, publishDir string, files []*htup.File) error {
 	for _, file := range files {
 		rel := repoPath(publishDir, file.RelPath())
 		if _, err := wt.Add(rel); err != nil {
@@ -259,7 +259,7 @@ func repoPath(publishDir, rel string) string {
 	return path.Join(publishDir, rel)
 }
 
-func copyFile(fs billy.Filesystem, file *hosting.File, rel string) error {
+func copyFile(fs billy.Filesystem, file *htup.File, rel string) error {
 	dst, err := fs.Create(rel)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", rel, err)

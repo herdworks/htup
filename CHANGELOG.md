@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* **BREAKING:** Renamed the module to `github.com/herdworks/htup`, the root
+  package from `hyperproviders` to `htup`, and the `htdt` CLI to `htup`.
+
 ## v0.26.0 (2026-08-03)
 
 * Added JSON Schema metadata for hosting providers, provider filter rules, and

@@ -6,14 +6,14 @@ import (
 	"context"
 	"fmt"
 
-	hyperproviders "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
 const Kind = "runtime"
 
 // Secrets are sensitive, caller-supplied values for one deployment or
 // readiness operation.
-type Secrets map[string]hyperproviders.SecretValue
+type Secrets map[string]htup.SecretValue
 
 // Provider resolves secret keys from the runtime values supplied at creation.
 type Provider struct {
@@ -25,7 +25,7 @@ type Provider struct {
 func New(secrets Secrets) *Provider {
 	runtimeSecrets := make(Secrets, len(secrets))
 	for key, value := range secrets {
-		runtimeSecrets[key] = hyperproviders.BytesSecret(value)
+		runtimeSecrets[key] = htup.BytesSecret(value)
 	}
 	return &Provider{secrets: runtimeSecrets}
 }
@@ -33,16 +33,16 @@ func New(secrets Secrets) *Provider {
 func (*Provider) Name() string { return Kind }
 
 // Resolve returns the caller-supplied value for key.
-func (p *Provider) Resolve(ctx context.Context, key string) (hyperproviders.SecretValue, error) {
+func (p *Provider) Resolve(ctx context.Context, key string) (htup.SecretValue, error) {
 	if p == nil {
-		return nil, fmt.Errorf("%w: %s", hyperproviders.ErrSecretNotFound, key)
+		return nil, fmt.Errorf("%w: %s", htup.ErrSecretNotFound, key)
 	}
 	value, ok := p.secrets[key]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", hyperproviders.ErrSecretNotFound, key)
+		return nil, fmt.Errorf("%w: %s", htup.ErrSecretNotFound, key)
 	}
 	if value.Empty() {
-		return nil, fmt.Errorf("%w: %s", hyperproviders.ErrSecretEmpty, key)
+		return nil, fmt.Errorf("%w: %s", htup.ErrSecretEmpty, key)
 	}
-	return hyperproviders.BytesSecret(value), nil
+	return htup.BytesSecret(value), nil
 }

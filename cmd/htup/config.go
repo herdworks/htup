@@ -7,18 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	hp "github.com/herdworks/hyperproviders-go"
-	"github.com/herdworks/hyperproviders-go/providers/env"
-	_ "github.com/herdworks/hyperproviders-go/providers/git"
-	_ "github.com/herdworks/hyperproviders-go/providers/s3"
+	"github.com/herdworks/htup"
+	"github.com/herdworks/htup/providers/env"
+	_ "github.com/herdworks/htup/providers/git"
+	_ "github.com/herdworks/htup/providers/s3"
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level htdt configuration.
+// Config is the top-level htup configuration.
 type Config struct {
-	Version      int                        `json:"version"      yaml:"version"`
-	Providers    hp.HostingProviders        `json:"providers"    yaml:"providers"`
-	Environments map[string]*hp.Environment `json:"environments" yaml:"environments"`
+	Version      int                          `json:"version"      yaml:"version"`
+	Providers    htup.HostingProviders        `json:"providers"    yaml:"providers"`
+	Environments map[string]*htup.Environment `json:"environments" yaml:"environments"`
 }
 
 // LoadConfig reads and parses a JSON or YAML config file.
@@ -48,7 +48,7 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // Environment returns the environment with the given name.
-func (c *Config) Environment(name string) (*hp.Environment, error) {
+func (c *Config) Environment(name string) (*htup.Environment, error) {
 	env, ok := c.Environments[name]
 	if !ok {
 		return nil, fmt.Errorf("environment %q not found in config", name)
@@ -59,8 +59,8 @@ func (c *Config) Environment(name string) (*hp.Environment, error) {
 	return env, nil
 }
 
-// SecretProviders returns the default htdt secret providers. The CLI resolves
+// SecretProviders returns the default htup secret providers. The CLI resolves
 // secrets from OS environment variables because config files are durable project state.
-func SecretProviders() hp.SecretsProviders {
-	return hp.SecretsProviders{env.New()}
+func SecretProviders() htup.SecretsProviders {
+	return htup.SecretsProviders{env.New()}
 }

@@ -18,14 +18,14 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	hosting "github.com/herdworks/hyperproviders-go"
-	"github.com/herdworks/hyperproviders-go/providers/files"
-	"github.com/herdworks/hyperproviders-go/providers/runtime"
+	"github.com/herdworks/htup"
+	"github.com/herdworks/htup/providers/files"
+	"github.com/herdworks/htup/providers/runtime"
 	stdssh "golang.org/x/crypto/ssh"
 )
 
-func runtimeSecretProviders(secrets runtime.Secrets) hosting.SecretsProviders {
-	return hosting.SecretsProviders{runtime.New(secrets)}
+func runtimeSecretProviders(secrets runtime.Secrets) htup.SecretsProviders {
+	return htup.SecretsProviders{runtime.New(secrets)}
 }
 
 // setupLocalRemote creates a bare git repo that serves as the remote for
@@ -53,10 +53,10 @@ func seedSource(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-func newProvider(t *testing.T, remote string) *hosting.HostingProvider {
+func newProvider(t *testing.T, remote string) *htup.HostingProvider {
 	t.Helper()
 
-	return &hosting.HostingProvider{
+	return &htup.HostingProvider{
 		Kind:     Kind,
 		Endpoint: remote,
 		Config: map[string]any{
@@ -67,13 +67,13 @@ func newProvider(t *testing.T, remote string) *hosting.HostingProvider {
 	}
 }
 
-func deploy(ctx context.Context, provider *hosting.HostingProvider, root string, secretProviders hosting.SecretsProviders, kind hosting.DeploymentKind, w io.Writer) error {
+func deploy(ctx context.Context, provider *htup.HostingProvider, root string, secretProviders htup.SecretsProviders, kind htup.DeploymentKind, w io.Writer) error {
 	configPath := root + ".yaml"
 	defer os.Remove(configPath)
 	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
 		return err
 	}
-	return (&hosting.Deployment{ConfigPath: configPath, Providers: hosting.HostingProviders{"test": provider}, PayloadPath: root, Kind: kind}).Execute(ctx, secretProviders, w)
+	return (&htup.Deployment{ConfigPath: configPath, Providers: htup.HostingProviders{"test": provider}, PayloadPath: root, Kind: kind}).Execute(ctx, secretProviders, w)
 }
 
 func TestGitProvider_FirstDeploy(t *testing.T) {
@@ -85,7 +85,7 @@ func TestGitProvider_FirstDeploy(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestGitProvider_FirstDeployToMissingBranchDoesNotTouchExistingBranch(t *tes
 	seedSource(t, mainSource, map[string]string{"README.md": "main branch"})
 
 	mainProvider := newProvider(t, remote)
-	if err := deploy(context.Background(), mainProvider, mainSource, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), mainProvider, mainSource, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("seed main Deploy: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestGitProvider_FirstDeployToMissingBranchDoesNotTouchExistingBranch(t *tes
 
 	publicProvider := newProvider(t, remote)
 	publicProvider.Config["branch"] = "public"
-	if err := deploy(context.Background(), publicProvider, publicSource, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), publicProvider, publicSource, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("public Deploy: %v", err)
 	}
 
@@ -158,12 +158,12 @@ func TestGitProvider_SecondDeployIsNoOpWhenUnchanged(t *testing.T) {
 	seedSource(t, source, map[string]string{"index.html": "<h1>home</h1>"})
 
 	p := newProvider(t, remote)
-	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("first Deploy: %v", err)
 	}
 
 	// Second deploy with identical content should be a no-op.
-	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("second Deploy: %v", err)
 	}
 }
@@ -173,7 +173,7 @@ func TestGitProvider_PreconditionReplacesFinalTreeInOneCommit(t *testing.T) {
 	provider := newProvider(t, remote)
 	seed := t.TempDir()
 	seedSource(t, seed, map[string]string{"index.html": "old page", "revision.json": "old revision"})
-	if err := deploy(context.Background(), provider, seed, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+	if err := deploy(context.Background(), provider, seed, nil, htup.CompleteDeployment, io.Discard); err != nil {
 		t.Fatalf("seed Deploy: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestGitProvider_PreconditionReplacesFinalTreeInOneCommit(t *testing.T) {
 		".deployment/pending":  "new revision",
 		".deployment.json":     `{"preconditions":[{"target":"revision.json","expected":".deployment/expected","contents":".deployment/pending"}]}`,
 	})
-	if err := deploy(context.Background(), provider, next, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+	if err := deploy(context.Background(), provider, next, nil, htup.CompleteDeployment, io.Discard); err != nil {
 		t.Fatalf("conditional Deploy: %v", err)
 	}
 
@@ -205,7 +205,7 @@ func TestGitProvider_PreconditionCreateOnlyAndMismatch(t *testing.T) {
 	provider := newProvider(t, remote)
 	seed := t.TempDir()
 	seedSource(t, seed, map[string]string{"index.html": "old page"})
-	if err := deploy(context.Background(), provider, seed, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+	if err := deploy(context.Background(), provider, seed, nil, htup.CompleteDeployment, io.Discard); err != nil {
 		t.Fatalf("seed Deploy: %v", err)
 	}
 
@@ -215,7 +215,7 @@ func TestGitProvider_PreconditionCreateOnlyAndMismatch(t *testing.T) {
 		".deployment/pending": "created revision",
 		".deployment.json":    `{"preconditions":[{"target":"revision.json","contents":".deployment/pending"}]}`,
 	})
-	if err := deploy(context.Background(), provider, create, nil, hosting.CompleteDeployment, io.Discard); err != nil {
+	if err := deploy(context.Background(), provider, create, nil, htup.CompleteDeployment, io.Discard); err != nil {
 		t.Fatalf("create-only Deploy: %v", err)
 	}
 
@@ -226,8 +226,8 @@ func TestGitProvider_PreconditionCreateOnlyAndMismatch(t *testing.T) {
 		".deployment/pending":  "replacement revision",
 		".deployment.json":     `{"preconditions":[{"target":"revision.json","expected":".deployment/expected","contents":".deployment/pending"}]}`,
 	})
-	err := deploy(context.Background(), provider, mismatch, nil, hosting.CompleteDeployment, io.Discard)
-	if !errors.Is(err, hosting.ErrDeploymentPreconditionFailed) {
+	err := deploy(context.Background(), provider, mismatch, nil, htup.CompleteDeployment, io.Discard)
+	if !errors.Is(err, htup.ErrDeploymentPreconditionFailed) {
 		t.Fatalf("mismatched Deploy error = %v, want precondition failure", err)
 	}
 
@@ -283,7 +283,7 @@ func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("seed Deploy: %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestGitProvider_PublishDirReplacesSubtree(t *testing.T) {
 		"about/x.html": "<h1>about</h1>",
 	})
 	p.Config["publish_dir"] = "public"
-	if err := deploy(context.Background(), p, nextSource, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, nextSource, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestGitProvider_OverlayDeployPreservesExistingBranchFiles(t *testing.T) {
 	})
 
 	p := newProvider(t, remote)
-	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("seed Deploy: %v", err)
 	}
 
@@ -339,7 +339,7 @@ func TestGitProvider_OverlayDeployPreservesExistingBranchFiles(t *testing.T) {
 		"index.html":           "<h1>updated home</h1>",
 		"posts/new/index.html": "<h1>new</h1>",
 	})
-	if err := deploy(context.Background(), p, partialSource, nil, hosting.IncrementalDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, partialSource, nil, htup.IncrementalDeployment, nil); err != nil {
 		t.Fatalf("overlay Deploy: %v", err)
 	}
 
@@ -370,14 +370,14 @@ func TestGitProvider_OverlayDeployRequiresExistingBranch(t *testing.T) {
 	seedSource(t, source, map[string]string{"index.html": "<h1>home</h1>"})
 
 	p := newProvider(t, remote)
-	err := deploy(context.Background(), p, source, nil, hosting.IncrementalDeployment, nil)
+	err := deploy(context.Background(), p, source, nil, htup.IncrementalDeployment, nil)
 	if err == nil {
 		t.Fatal("Deploy() error = nil, want overlay missing branch error")
 	}
 	if !strings.Contains(err.Error(), "overlay deployment requires existing remote branch") {
 		t.Fatalf("Deploy() error = %v, want overlay missing branch error", err)
 	}
-	if err := deploy(context.Background(), p, source, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(context.Background(), p, source, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("replacement Deploy after failed overlay: %v", err)
 	}
 }
@@ -402,10 +402,10 @@ func TestGitProvider_SerializesSameRemoteBranchDeploys(t *testing.T) {
 	errs := make(chan error, 2)
 	for _, deploy := range []func() error{
 		func() error {
-			return deploy(context.Background(), pages, pagesSource, nil, hosting.CompleteDeployment, nil)
+			return deploy(context.Background(), pages, pagesSource, nil, htup.CompleteDeployment, nil)
 		},
 		func() error {
-			return deploy(context.Background(), assets, assetsSource, nil, hosting.CompleteDeployment, nil)
+			return deploy(context.Background(), assets, assetsSource, nil, htup.CompleteDeployment, nil)
 		},
 	} {
 		wg.Add(1)
@@ -502,7 +502,7 @@ func TestGitProvider_ReadyFileRemoteNeedsNoAuth(t *testing.T) {
 
 func TestGitProvider_ReadyHTTPRequiresRuntimeToken(t *testing.T) {
 	p := newProvider(t, "https://example.com/repo.git")
-	p.Secrets = hosting.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
+	p.Secrets = htup.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
 
 	err := p.Ready(context.Background(), nil)
 	if err == nil {
@@ -515,8 +515,8 @@ func TestGitProvider_ReadyHTTPRequiresRuntimeToken(t *testing.T) {
 
 func TestGitProvider_ReadyHTTPWithRuntimeToken(t *testing.T) {
 	p := newProvider(t, "https://example.com/repo.git")
-	p.Secrets = hosting.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
-	secretProviders := runtimeSecretProviders(runtime.Secrets{"GIT_TOKEN": hosting.StringSecret("secret")})
+	p.Secrets = htup.Secrets{{Name: "token", Key: "GIT_TOKEN"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"GIT_TOKEN": htup.StringSecret("secret")})
 
 	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
@@ -525,8 +525,8 @@ func TestGitProvider_ReadyHTTPWithRuntimeToken(t *testing.T) {
 
 func TestGitProvider_ReadySSHRequiresPrivateKey(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = hosting.Secrets{{Name: "ssh_key_path", Key: "DEPLOY_SSH_KEY"}}
-	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret("/tmp/deploy_key")})
+	p.Secrets = htup.Secrets{{Name: "ssh_key_path", Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": htup.StringSecret("/tmp/deploy_key")})
 
 	err := p.Ready(context.Background(), secretProviders)
 	if err == nil {
@@ -539,8 +539,8 @@ func TestGitProvider_ReadySSHRequiresPrivateKey(t *testing.T) {
 
 func TestGitProvider_ReadySSHWithRuntimePrivateKey(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
-	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
+	p.Secrets = htup.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": htup.StringSecret(testSSHPrivateKeyPEM(t))})
 
 	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
@@ -571,8 +571,8 @@ func TestGitProvider_ReadySSHWithFilesPrivateKey(t *testing.T) {
 	}
 
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: keyPath}}
-	secretProviders := hosting.SecretsProviders{files.New()}
+	p.Secrets = htup.Secrets{{Name: secretSSHPrivateKey, Key: keyPath}}
+	secretProviders := htup.SecretsProviders{files.New()}
 
 	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
@@ -582,8 +582,8 @@ func TestGitProvider_ReadySSHWithFilesPrivateKey(t *testing.T) {
 func TestGitProvider_ReadySSHWithKnownHosts(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
 	p.Config["known_hosts"] = testKnownHostsLine(t)
-	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
-	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
+	p.Secrets = htup.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": htup.StringSecret(testSSHPrivateKeyPEM(t))})
 
 	if err := p.Ready(context.Background(), secretProviders); err != nil {
 		t.Fatalf("Ready: %v", err)
@@ -593,8 +593,8 @@ func TestGitProvider_ReadySSHWithKnownHosts(t *testing.T) {
 func TestGitProvider_ReadySSHRejectsInvalidKnownHosts(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
 	p.Config["known_hosts"] = "not known_hosts"
-	p.Secrets = hosting.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
-	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
+	p.Secrets = htup.Secrets{{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"}}
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": htup.StringSecret(testSSHPrivateKeyPEM(t))})
 
 	err := p.Ready(context.Background(), secretProviders)
 	if err == nil {
@@ -607,11 +607,11 @@ func TestGitProvider_ReadySSHRejectsInvalidKnownHosts(t *testing.T) {
 
 func TestGitProvider_ReadySSHReportsMissingPassphrase(t *testing.T) {
 	p := newProvider(t, "git@example.com:repo.git")
-	p.Secrets = hosting.Secrets{
+	p.Secrets = htup.Secrets{
 		{Name: secretSSHPrivateKey, Key: "DEPLOY_SSH_KEY"},
 		{Name: secretSSHPassphrase, Key: "DEPLOY_SSH_PASSPHRASE"},
 	}
-	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": hosting.StringSecret(testSSHPrivateKeyPEM(t))})
+	secretProviders := runtimeSecretProviders(runtime.Secrets{"DEPLOY_SSH_KEY": htup.StringSecret(testSSHPrivateKeyPEM(t))})
 
 	err := p.Ready(context.Background(), secretProviders)
 	if err == nil {
@@ -644,7 +644,7 @@ func TestSettings_WorkdirSeparatesProviderWorkspaces(t *testing.T) {
 		t.Fatalf("workdir third: %v", err)
 	}
 
-	prefix := filepath.Join(root, hosting.ProviderWorkspaceDir, Kind) + string(filepath.Separator)
+	prefix := filepath.Join(root, htup.ProviderWorkspaceDir, Kind) + string(filepath.Separator)
 	for _, got := range []string{first, second, third} {
 		if !strings.HasPrefix(got, prefix) {
 			t.Fatalf("workdir %q does not live under %q", got, prefix)
@@ -668,7 +668,7 @@ func TestGitProvider_TagEnabled(t *testing.T) {
 	p.Config["tag_prefix"] = "build-"
 
 	ctx := WithBuildID(context.Background(), "abc123")
-	if err := deploy(ctx, p, source, nil, hosting.CompleteDeployment, nil); err != nil {
+	if err := deploy(ctx, p, source, nil, htup.CompleteDeployment, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -708,7 +708,7 @@ func TestGitProvider_UnmarshalHostingProvider(t *testing.T) {
 			"branch": "main"
 		}
 	}`)
-	var p hosting.HostingProvider
+	var p htup.HostingProvider
 	if err := json.Unmarshal(raw, &p); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}

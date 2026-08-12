@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	hyperproviders "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
 func TestProviderResolve(t *testing.T) {
-	values := Secrets{"TEST": hyperproviders.StringSecret("secret")}
+	values := Secrets{"TEST": htup.StringSecret("secret")}
 	provider := New(values)
 	values["TEST"][0] = 'x'
 
@@ -24,14 +24,14 @@ func TestProviderResolve(t *testing.T) {
 
 func TestProviderResolveMissing(t *testing.T) {
 	_, err := New(nil).Resolve(context.Background(), "TEST")
-	if !errors.Is(err, hyperproviders.ErrSecretNotFound) {
+	if !errors.Is(err, htup.ErrSecretNotFound) {
 		t.Fatalf("Resolve err = %v, want ErrSecretNotFound", err)
 	}
 }
 
 func TestProviderResolveEmpty(t *testing.T) {
 	_, err := New(Secrets{"TEST": nil}).Resolve(context.Background(), "TEST")
-	if !errors.Is(err, hyperproviders.ErrSecretEmpty) {
+	if !errors.Is(err, htup.ErrSecretEmpty) {
 		t.Fatalf("Resolve err = %v, want ErrSecretEmpty", err)
 	}
 }

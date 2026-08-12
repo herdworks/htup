@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	hosting "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
 func TestProvider_Resolve(t *testing.T) {
@@ -26,7 +26,7 @@ func TestProvider_ResolveEmptyReturnsError(t *testing.T) {
 
 	provider := New()
 	_, err := provider.Resolve(context.Background(), "TEST_HYPER_MISSING")
-	if !errors.Is(err, hosting.ErrSecretEmpty) {
+	if !errors.Is(err, htup.ErrSecretEmpty) {
 		t.Fatalf("Resolve err = %v, want ErrSecretEmpty", err)
 	}
 }

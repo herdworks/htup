@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	hosting "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
 func TestProvider_ResolveAbsolutePath(t *testing.T) {
@@ -130,7 +130,7 @@ func TestProvider_ResolveRejectsUnsupportedExpansion(t *testing.T) {
 func TestProvider_ResolveMissing(t *testing.T) {
 	provider := New()
 	_, err := provider.Resolve(context.Background(), filepath.Join(t.TempDir(), "missing"))
-	if !errors.Is(err, hosting.ErrSecretNotFound) {
+	if !errors.Is(err, htup.ErrSecretNotFound) {
 		t.Fatalf("Resolve err = %v, want ErrSecretNotFound", err)
 	}
 }
@@ -144,7 +144,7 @@ func TestProvider_ResolveEmpty(t *testing.T) {
 
 	provider := New()
 	_, err := provider.Resolve(context.Background(), path)
-	if !errors.Is(err, hosting.ErrSecretEmpty) {
+	if !errors.Is(err, htup.ErrSecretEmpty) {
 		t.Fatalf("Resolve err = %v, want ErrSecretEmpty", err)
 	}
 }

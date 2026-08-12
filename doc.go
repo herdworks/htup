@@ -1,4 +1,4 @@
-// Package hyperproviders is the HyperTexting CMS deployment engine.
+// Package htup is the HyperTexting CMS deployment engine.
 //
 // A [Deployment] combines provider selection, a payload directory, and a
 // [DeploymentKind]. It owns planning, file discovery, filtering, secret
@@ -10,4 +10,4 @@
 // HostingProvider engine packages such as providers/s3 and providers/git register
 // their engines from init so validation, planning, and deployment can bind
 // provider-specific behavior.
-package hyperproviders
+package htup

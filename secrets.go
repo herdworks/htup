@@ -1,4 +1,4 @@
-package hyperproviders
+package htup
 
 import (
 	"context"
@@ -40,7 +40,7 @@ type Secret struct {
 func (Secret) JSONSchemaTitle() string {
 	return "Hosting provider secret"
 }
-func (Secret) JSONSchemaName() string { return "provider-secret" }
+func (Secret) JSONSchemaName() string    { return "provider-secret" }
 func (Secret) JSONSchemaSummary() string { return "A deployment-time secret reference." }
 
 func (Secret) JSONSchemaDescription() string {

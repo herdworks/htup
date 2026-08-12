@@ -1,4 +1,4 @@
-// Package env implements a hosting.SecretsProvider backed by OS environment variables.
+// Package env implements a htup.SecretsProvider backed by OS environment variables.
 package env
 
 import (
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	hosting "github.com/herdworks/hyperproviders-go"
+	"github.com/herdworks/htup"
 )
 
 const Kind = "env"
@@ -20,13 +20,13 @@ func New() *Provider { return &Provider{} }
 func (*Provider) Name() string { return Kind }
 
 // Resolve returns the environment variable value for key.
-func (p *Provider) Resolve(ctx context.Context, key string) (hosting.SecretValue, error) {
+func (p *Provider) Resolve(ctx context.Context, key string) (htup.SecretValue, error) {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", hosting.ErrSecretNotFound, key)
+		return nil, fmt.Errorf("%w: %s", htup.ErrSecretNotFound, key)
 	}
 	if value == "" {
-		return nil, fmt.Errorf("%w: %s", hosting.ErrSecretEmpty, key)
+		return nil, fmt.Errorf("%w: %s", htup.ErrSecretEmpty, key)
 	}
-	return hosting.StringSecret(value), nil
+	return htup.StringSecret(value), nil
 }
