@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.27.1 (2026-08-11)
+
 * Updated the media dependency to `github.com/herdworks/hypermedia` v0.2.0.
 
 ## v0.27.0 (2026-08-11)
