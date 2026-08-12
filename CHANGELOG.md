@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.27.0 (2026-08-11)
+
 * **BREAKING:** Renamed the module to `github.com/herdworks/htup`, the root
   package from `hyperproviders` to `htup`, and the `htdt` CLI to `htup`.
 
