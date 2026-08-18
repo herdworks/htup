@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.27.2 (2026-08-18)
+
 * Improved deployment failure logs with provider-specific error reasons, while
   preserving generated deployment logs if the console output writer fails.
 * Fixed S3 deployments to retain the original upload error when concurrent work
