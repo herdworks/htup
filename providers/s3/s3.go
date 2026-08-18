@@ -178,7 +178,7 @@ func (engine Engine) deployFiles(ctx context.Context, secretProviders htup.Secre
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			return ctx.Err()
+			return groupErrorOrContextError(ctx, g)
 		}
 		g.Go(func() error {
 			defer func() { <-sem }()
@@ -186,6 +186,13 @@ func (engine Engine) deployFiles(ctx context.Context, secretProviders htup.Secre
 		})
 	}
 	return g.Wait()
+}
+
+func groupErrorOrContextError(ctx context.Context, g *errgroup.Group) error {
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (Engine) ValidateOperation(provider *htup.HostingProvider, operation htup.DeploymentOperation) error {

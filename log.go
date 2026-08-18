@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,6 +24,11 @@ type synchronizedWriter struct {
 	w  io.Writer
 }
 
+type bestEffortMirrorWriter struct {
+	primary io.Writer
+	mirror  io.Writer
+}
+
 type deployLogContextKey struct{}
 type deploymentRootContextKey struct{}
 type providerNameContextKey struct{}
@@ -31,6 +37,20 @@ func (w *synchronizedWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.w.Write(p)
+}
+
+func (w *bestEffortMirrorWriter) Write(p []byte) (int, error) {
+	n, err := w.primary.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if n != len(p) {
+		return n, io.ErrShortWrite
+	}
+	if w.mirror != nil {
+		_, _ = w.mirror.Write(p)
+	}
+	return n, nil
 }
 
 // BeginDeployment writes the deployment start line and returns the final log
@@ -65,7 +85,7 @@ func BeginDeployment(ctx context.Context, environment string, w io.Writer) (cont
 			closeDeploymentLogFile(file)
 			return
 		}
-		logDeploymentState(w, environment, "failed")
+		logDeploymentFailure(w, environment, err)
 		closeDeploymentLogFile(file)
 	}
 }
@@ -176,6 +196,21 @@ func logDeploymentState(w io.Writer, environment, state string) {
 	fmt.Fprintf(w, "[deployment] environment %q %s\n", environment, state)
 }
 
+func logDeploymentFailure(w io.Writer, environment string, err error) {
+	state := "failed"
+	if reason := errorReason(err); reason != "" {
+		state += ": " + reason
+	}
+	logDeploymentState(w, environment, state)
+}
+
+func errorReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(err.Error()))
+}
+
 func deploymentWriter(ctx context.Context, fallback io.Writer) io.Writer {
 	state, ok := deployLogStateFrom(ctx)
 	if ok && state.w != nil {
@@ -195,7 +230,7 @@ func newDeploymentLogWriter(ctx context.Context, base io.Writer) (io.Writer, *os
 		fmt.Fprintf(base, "[deployment] log file failed: %v\n", err)
 		return base, nil, ""
 	}
-	return io.MultiWriter(base, file), file, path
+	return &bestEffortMirrorWriter{primary: file, mirror: base}, file, path
 }
 
 func createDeploymentLogFile(root string) (*os.File, string, error) {

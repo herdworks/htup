@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/herdworks/htup"
 	"github.com/herdworks/htup/providers/runtime"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestUnmarshalHostingProvider(t *testing.T) {
@@ -424,6 +426,74 @@ func TestDeployment_S3OperationOrdersPreconditionBulkAndEnqueue(t *testing.T) {
 	bulk := map[string]bool{writes[1]: true, writes[2]: true}
 	if !bulk["bulk/first.txt"] || !bulk["bulk/second.txt"] {
 		t.Fatalf("bulk writes = %#v", writes[1:3])
+	}
+}
+
+func TestGroupErrorOrContextError(t *testing.T) {
+	t.Run("worker failure", func(t *testing.T) {
+		wantErr := errors.New("s3: put first.txt: request failed")
+		g, ctx := errgroup.WithContext(context.Background())
+		g.Go(func() error { return wantErr })
+		<-ctx.Done()
+
+		if err := groupErrorOrContextError(ctx, g); !errors.Is(err, wantErr) {
+			t.Fatalf("groupErrorOrContextError() error = %v, want %v", err, wantErr)
+		}
+	})
+
+	t.Run("caller cancellation", func(t *testing.T) {
+		parent, cancel := context.WithCancel(context.Background())
+		g, ctx := errgroup.WithContext(parent)
+		cancel()
+		<-ctx.Done()
+
+		if err := groupErrorOrContextError(ctx, g); !errors.Is(err, context.Canceled) {
+			t.Fatalf("groupErrorOrContextError() error = %v, want context canceled", err)
+		}
+	})
+}
+
+func TestDeployment_S3UploadFailureLogsOriginalReason(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<h1>test</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut || request.URL.Path != "/assets/index.html" {
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		writer.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	provider := readyProvider()
+	provider.Endpoint = server.URL
+	configPath := filepath.Join(t.TempDir(), "site.yaml")
+	if err := os.WriteFile(configPath, []byte("title: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deployment := &htup.Deployment{
+		ConfigPath:  configPath,
+		Providers:   htup.HostingProviders{"assets": provider},
+		PayloadPath: root,
+		Kind:        htup.CompleteDeployment,
+	}
+	var log bytes.Buffer
+	err := deployment.Execute(context.Background(), readySecretProviders(), &log)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want S3 upload error")
+	}
+	if !strings.Contains(err.Error(), "s3: put index.html:") {
+		t.Fatalf("Execute() error = %v, want contextual S3 upload error", err)
+	}
+	for _, want := range []string{
+		`[provider/s3/assets] hosting "assets" failed: s3: put index.html:`,
+		`[deployment] failed: provider "assets": s3: put index.html:`,
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("deployment log missing %q in:\n%s", want, log.String())
+		}
 	}
 }
 

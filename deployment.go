@@ -128,6 +128,7 @@ func (d *Deployment) Execute(ctx context.Context, secrets SecretsProviders, w io
 		opCtx := withProviderName(ctx, providerName(d.Providers, op.HostingProvider))
 		op.HostingProvider.logSecrets(opCtx, secrets, w)
 		if err := op.HostingProvider.Ready(opCtx, secrets); err != nil {
+			LogProvider(w, opCtx, op.HostingProvider, "hosting", providerName(d.Providers, op.HostingProvider), "failed: "+errorReason(err))
 			d.fail()
 			return fmt.Errorf("provider %q readiness: %w", providerName(d.Providers, op.HostingProvider), err)
 		}
@@ -139,6 +140,7 @@ func (d *Deployment) Execute(ctx context.Context, secrets SecretsProviders, w io
 	for _, op := range plan.Sequential {
 		opCtx := withProviderName(ctx, providerName(d.Providers, op.HostingProvider))
 		if err := op.HostingProvider.PerformOperation(opCtx, secrets, op, w); err != nil {
+			LogProvider(w, opCtx, op.HostingProvider, "hosting", providerName(d.Providers, op.HostingProvider), "failed: "+errorReason(err))
 			d.fail()
 			return fmt.Errorf("provider %q: %w", providerName(d.Providers, op.HostingProvider), err)
 		}
@@ -153,6 +155,7 @@ func (d *Deployment) Execute(ctx context.Context, secrets SecretsProviders, w io
 			defer wg.Done()
 			opCtx := withProviderName(ctx, providerName(d.Providers, op.HostingProvider))
 			if err := op.HostingProvider.PerformOperation(opCtx, secrets, op, w); err != nil {
+				LogProvider(w, opCtx, op.HostingProvider, "hosting", providerName(d.Providers, op.HostingProvider), "failed: "+errorReason(err))
 				lock.Lock()
 				errs = append(errs, fmt.Errorf("provider %q: %w", providerName(d.Providers, op.HostingProvider), err))
 				lock.Unlock()

@@ -56,7 +56,7 @@ func (e *failingEngine) ValidateOperation(provider *HostingProvider, operation D
 	return nil
 }
 func (e *failingEngine) PerformOperation(ctx context.Context, secretProviders SecretsProviders, operation DeploymentOperation, w io.Writer) error {
-	return errors.New("deploy failed")
+	return errors.New("deploy failed\nwith details")
 }
 
 type failingReadyEngine struct{}
@@ -490,7 +490,8 @@ func TestProvider_DeployLogsFailureFromEngine(t *testing.T) {
 	for _, want := range []string{
 		`[deployment] starting`,
 		`[provider/fail-test/fail-test] hosting "fail-test" ready`,
-		`[deployment] failed`,
+		`[provider/fail-test/fail-test] hosting "fail-test" failed: deploy failed with details`,
+		`[deployment] failed: provider "fail-test": deploy failed with details`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log output missing %q in:\n%s", want, got)

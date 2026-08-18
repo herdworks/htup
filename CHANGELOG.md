@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Improved deployment failure logs with provider-specific error reasons, while
+  preserving generated deployment logs if the console output writer fails.
+* Fixed S3 deployments to retain the original upload error when concurrent work
+  cancels the deployment context.
+
 ## v0.27.1 (2026-08-11)
 
 * Updated the media dependency to `github.com/herdworks/hypermedia` v0.2.0.

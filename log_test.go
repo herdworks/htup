@@ -3,11 +3,20 @@ package htup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write(p []byte) (int, error) {
+	return 0, w.err
+}
 
 func TestBeginDeployment_UsesEnvironmentName(t *testing.T) {
 	var buf bytes.Buffer
@@ -84,6 +93,47 @@ func TestBeginDeployment_WritesGeneratedLogFile(t *testing.T) {
 	}
 	if got := string(data); got != buf.String() {
 		t.Fatalf("log file = %q, want stdout copy %q", got, buf.String())
+	}
+}
+
+func TestBeginDeployment_GeneratedLogSurvivesMirrorFailure(t *testing.T) {
+	root := t.TempDir()
+	ctx := WithDeploymentRoot(context.Background(), root)
+	ctx, w, finish := BeginDeployment(ctx, "production", failingWriter{err: errors.New("stdout closed")})
+	LogProvider(w, ctx, &HostingProvider{Kind: "s3"}, "hosting", "assets", "ready")
+	finish(errors.New("upload failed\nwith details"))
+
+	entries, err := os.ReadDir(filepath.Join(root, ProviderWorkspaceDir, "logs"))
+	if err != nil {
+		t.Fatalf("ReadDir(logs) error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("log file count = %d, want 1", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(root, ProviderWorkspaceDir, "logs", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile(log) error = %v", err)
+	}
+	for _, want := range []string{
+		`[deployment] environment "production" starting`,
+		`[provider/s3/s3] hosting "assets" ready`,
+		`[deployment] environment "production" failed: upload failed with details`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("log file missing %q in:\n%s", want, data)
+		}
+	}
+}
+
+func TestBestEffortMirrorWriter_PropagatesPrimaryFailure(t *testing.T) {
+	wantErr := errors.New("disk full")
+	w := &bestEffortMirrorWriter{
+		primary: failingWriter{err: wantErr},
+		mirror:  &bytes.Buffer{},
+	}
+
+	if _, err := w.Write([]byte("log line\n")); !errors.Is(err, wantErr) {
+		t.Fatalf("Write() error = %v, want %v", err, wantErr)
 	}
 }
 
