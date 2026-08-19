@@ -14,16 +14,17 @@ import (
 
 // Deployment is the sole high-level entry point for a selected provider set.
 type Deployment struct {
-	ConfigPath   string
-	ConfigBytes  []byte
-	PayloadPath  string
-	Providers    HostingProviders
-	Environment  string
-	Kind         DeploymentKind
-	instructions DeploymentInstructions
-	plan         DeploymentPlan
-	status       DeploymentStatus
-	mu           sync.Mutex
+	ConfigPath    string
+	ConfigBytes   []byte
+	PayloadPath   string
+	Providers     HostingProviders
+	ProviderNames []string
+	Environment   string
+	Kind          DeploymentKind
+	instructions  DeploymentInstructions
+	plan          DeploymentPlan
+	status        DeploymentStatus
+	mu            sync.Mutex
 }
 
 // DeploymentPlan separates operations that must observe conditional ordering
@@ -202,7 +203,7 @@ func (d *Deployment) Plan() DeploymentPlan {
 // bytes once, and validates every provider operation before returning a plan.
 func (d *Deployment) generatePlan(ctx context.Context, w io.Writer) (DeploymentInstructions, DeploymentPlan, error) {
 	d.mu.Lock()
-	configPath, configBytes, payloadPath, providers, environment, kind := d.ConfigPath, append([]byte(nil), d.ConfigBytes...), d.PayloadPath, d.Providers, d.Environment, d.Kind
+	configPath, configBytes, payloadPath, providers, providerNames, environment, kind := d.ConfigPath, append([]byte(nil), d.ConfigBytes...), d.PayloadPath, d.Providers, append([]string(nil), d.ProviderNames...), d.Environment, d.Kind
 	d.mu.Unlock()
 	var err error
 	if err := kind.Validate(); err != nil {
@@ -224,10 +225,25 @@ func (d *Deployment) generatePlan(ctx context.Context, w io.Writer) (DeploymentI
 	if err != nil {
 		return DeploymentInstructions{}, DeploymentPlan{}, err
 	}
-	if len(providers) != 0 && environment != "" {
-		return DeploymentInstructions{}, DeploymentPlan{}, errors.New("deployment providers and environment are mutually exclusive")
+	selectors := 0
+	if len(providers) != 0 {
+		selectors++
 	}
-	if len(providers) == 0 {
+	if len(providerNames) != 0 {
+		selectors++
+	}
+	if environment != "" {
+		selectors++
+	}
+	if selectors > 1 {
+		return DeploymentInstructions{}, DeploymentPlan{}, errors.New("deployment providers, provider names, and environment are mutually exclusive")
+	}
+	if len(providerNames) != 0 {
+		providers, err = config.Providers.Select(providerNames)
+		if err != nil {
+			return DeploymentInstructions{}, DeploymentPlan{}, err
+		}
+	} else if len(providers) == 0 {
 		providers, err = config.ProvidersForEnvironment(environment)
 		if err != nil {
 			return DeploymentInstructions{}, DeploymentPlan{}, err

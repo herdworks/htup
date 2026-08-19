@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added `Deployment.ProviderNames` for selecting named configured providers
+  during declarative deployment planning. Exactly one of explicit providers,
+  provider names, or an environment may be specified.
+
 ## v0.27.2 (2026-08-18)
 
 * Improved deployment failure logs with provider-specific error reasons, while

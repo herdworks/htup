@@ -144,6 +144,34 @@ func TestDeploymentPrepareSelectsEnvironmentFromConfigSnapshot(t *testing.T) {
 	}
 }
 
+func TestDeploymentPrepareSelectsProviderNamesFromConfigSnapshot(t *testing.T) {
+	engine := &fakeProviderEngine{}
+	RegisterEngine("named-selection", engine)
+	root := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "site.yaml")
+	config := "providers:\n  selected:\n    kind: named-selection\n    endpoint: https://example.com\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("page"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("providers: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deployment := &Deployment{ConfigPath: configPath, ConfigBytes: bytes, PayloadPath: root, ProviderNames: []string{"selected"}, Kind: CompleteDeployment}
+	if err := deployment.Prepare(context.Background(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if plan := deployment.Plan(); len(plan.Concurrent) != 1 || plan.Concurrent[0].HostingProvider.Kind != "named-selection" {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
 func TestDeploymentPrepareRejectsConfigDirectoryPayload(t *testing.T) {
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "site.yaml")
@@ -178,9 +206,33 @@ func TestValidateDeploymentPayloadPath(t *testing.T) {
 func TestDeploymentPrepareRejectsAmbiguousProviderSelection(t *testing.T) {
 	root := t.TempDir()
 	configPath := deploymentTestConfig(t, root)
-	deployment := &Deployment{ConfigPath: configPath, PayloadPath: root, Providers: HostingProviders{"explicit": {Kind: "operation-a", Endpoint: "https://example.com"}}, Environment: "production", Kind: CompleteDeployment}
-	if err := deployment.Prepare(context.Background(), io.Discard); err == nil {
-		t.Fatal("Prepare() error = nil")
+	explicit := HostingProviders{"explicit": {Kind: "operation-a", Endpoint: "https://example.com"}}
+	for _, test := range []struct {
+		name          string
+		providers     HostingProviders
+		providerNames []string
+		environment   string
+	}{
+		{name: "providers and environment", providers: explicit, environment: "production"},
+		{name: "providers and provider names", providers: explicit, providerNames: []string{"selected"}},
+		{name: "provider names and environment", providerNames: []string{"selected"}, environment: "production"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			deployment := &Deployment{
+				ConfigPath:    configPath,
+				PayloadPath:   root,
+				Providers:     test.providers,
+				ProviderNames: test.providerNames,
+				Environment:   test.environment,
+				Kind:          CompleteDeployment,
+			}
+			if err := deployment.Prepare(context.Background(), io.Discard); err == nil {
+				t.Fatal("Prepare() error = nil")
+			}
+			if deployment.Status() != DeploymentFailed {
+				t.Fatalf("status = %q, want failed", deployment.Status())
+			}
+		})
 	}
 }
 
