@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+## v0.28.0 (2026-09-27)
+
 * Added durable deployment lifecycle records to `.deployment.json`, while
   retaining embedded deployment instructions for provider planning.
 * Reserved `.build.json` from deployment uploads alongside deployment metadata.
