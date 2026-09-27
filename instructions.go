@@ -1,11 +1,8 @@
 package htup
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -27,13 +24,14 @@ type Precondition struct {
 type DeploymentIgnore []string
 
 const (
+	BuildResultFile            = ".build.json"
 	DeploymentInstructionsFile = ".deployment.json"
 	DeploymentIgnoreFile       = ".deploymentignore"
 )
 
 func (ignore DeploymentIgnore) Match(rel string) bool {
 	rel = strings.TrimLeft(filepath.ToSlash(rel), "/")
-	if rel == DeploymentIgnoreFile || rel == DeploymentInstructionsFile {
+	if rel == DeploymentIgnoreFile || rel == DeploymentInstructionsFile || rel == BuildResultFile {
 		return true
 	}
 	for _, entry := range ignore {
@@ -46,6 +44,7 @@ func (ignore DeploymentIgnore) Match(rel string) bool {
 	}
 	return false
 }
+
 func (ignore DeploymentIgnore) MatchDir(rel string) bool {
 	rel = strings.Trim(strings.TrimLeft(filepath.ToSlash(rel), "/"), "/")
 	return rel != "" && ignore.Match(rel+"/")
@@ -78,22 +77,11 @@ func (instructions DeploymentInstructions) Validate() error {
 	return nil
 }
 func LoadDeploymentInstructions(root string) (DeploymentInstructions, error) {
-	raw, err := os.ReadFile(filepath.Join(root, DeploymentInstructionsFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return DeploymentInstructions{}, nil
-	}
+	result, err := LoadDeploymentResult(root)
 	if err != nil {
 		return DeploymentInstructions{}, err
 	}
-	var instructions DeploymentInstructions
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&instructions); err != nil {
-		return DeploymentInstructions{}, fmt.Errorf("decode %s: %w", DeploymentInstructionsFile, err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return DeploymentInstructions{}, fmt.Errorf("decode %s: trailing JSON value", DeploymentInstructionsFile)
-	}
+	instructions := result.DeploymentInstructions
 	if err := instructions.Validate(); err != nil {
 		return DeploymentInstructions{}, err
 	}

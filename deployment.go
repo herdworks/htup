@@ -57,7 +57,7 @@ const (
 	DeploymentPending   DeploymentStatus = "pending"
 	DeploymentPlanning  DeploymentStatus = "planning"
 	DeploymentReady     DeploymentStatus = "ready"
-	DeploymentExecuting DeploymentStatus = "executing"
+	DeploymentRunning   DeploymentStatus = "running"
 	DeploymentSucceeded DeploymentStatus = "succeeded"
 	DeploymentFailed    DeploymentStatus = "failed"
 )
@@ -136,7 +136,7 @@ func (d *Deployment) Execute(ctx context.Context, secrets SecretsProviders, w io
 		LogProvider(w, opCtx, op.HostingProvider, "hosting", providerName(d.Providers, op.HostingProvider), "ready")
 	}
 	d.mu.Lock()
-	d.status = DeploymentExecuting
+	d.status = DeploymentRunning
 	d.mu.Unlock()
 	for _, op := range plan.Sequential {
 		opCtx := withProviderName(ctx, providerName(d.Providers, op.HostingProvider))

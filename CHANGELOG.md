@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog], and this project adheres to [Semantic
 
 ## Unreleased
 
+* Added durable deployment lifecycle records to `.deployment.json`, while
+  retaining embedded deployment instructions for provider planning.
+* Reserved `.build.json` from deployment uploads alongside deployment metadata.
+* Renamed the active deployment status from `executing` to `running`.
+
 ## v0.27.3 (2026-08-19)
 
 * Added `Deployment.ProviderNames` for selecting named configured providers
